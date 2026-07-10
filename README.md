@@ -27,7 +27,7 @@ explanation, an optional LLM integration (via OpenRouter) turns the
 generated output into a discursive, natural-language explanation.
 
 This is a Python/Streamlit reimplementation of the original Java/JavaFX
-E-ASP tool. The solving backend is the [`clingo` Python
+E-ASP tool ([github repository](https://github.com/MarcoMochi/E-ASP)). The solving backend is the [`clingo` Python
 package](https://potassco.org/clingo/) — no external solver binary is
 needed.
 
