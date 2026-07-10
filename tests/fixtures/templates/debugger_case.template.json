@@ -1,0 +1,27 @@
+{
+  "name": "my_debugger_case",
+  "description": "Replace this template with one ASP program and the expected debugger output.",
+  "program": "a.\nb :- a.\n",
+  "debug_rules": true,
+  "debug_answer_set": true,
+  "answer_set_count": 1,
+  "answer_set_index": 0,
+  "expected_answer_sets": [
+    ["a", "b"]
+  ],
+  "expected_atoms": [
+    {"atom": "b", "text": "b", "value": "true"}
+  ],
+  "explanations": [
+    {
+      "literal": "b",
+      "check_opt": false,
+      "responses_ordered": false,
+      "expected_responses": [
+        {"type": "rule", "rule": "b :- a."},
+        {"type": "fact", "rule": "a."}
+      ]
+    }
+  ]
+}
+

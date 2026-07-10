@@ -1,0 +1,16 @@
+{
+  "name": "unsat_defining_rules",
+  "description": "Unsat debugging must complete the minimal core with the rules defining the atoms that the core constraints require to be true: ':- not a.' pulls in 'a :- c.', ':- not d, not e.' pulls in 'c | d.' (head d) and reports that e has no defining rule. ':- not d, e.' is correctly absent: e can never be true, so that constraint never fires.",
+  "program": ":- not a.\na :- c.\nc | d.\n:- not d, e.\n:- not d, not e.\n",
+  "debug_rules": true,
+  "debug_answer_set": true,
+  "answer_set_count": 1,
+  "satisfiable": false,
+  "expected_unsat_responses": [
+    {"type": "rule", "rule": ":- not a."},
+    {"type": "rule", "rule": ":- not d, not e."},
+    {"type": "rule", "rule": "a :- c."},
+    {"type": "rule", "rule": "c | d."},
+    {"type": "rule", "rule": "No rules with e in the head"}
+  ]
+}

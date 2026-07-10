@@ -1,0 +1,14 @@
+{
+  "name": "my_unsat_case",
+  "description": "Use this template for an unsatisfiable program and its minimal-core responses.",
+  "program": "a.\n:- a.\n",
+  "debug_rules": true,
+  "debug_answer_set": true,
+  "answer_set_count": 1,
+  "satisfiable": false,
+  "expected_unsat_responses": [
+    {"type": "fact", "rule": "a."},
+    {"type": "rule", "rule": ":- a."}
+  ]
+}
+

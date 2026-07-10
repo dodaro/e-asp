@@ -1,0 +1,58 @@
+{
+  "name": "simple_aggregate",
+  "description": "Satisfiable aggregate explanation with expansion details.",
+  "program": "p(1).\np(2).\nq :- #count{X : p(X)} > 1.\n",
+  "debug_rules": true,
+  "debug_answer_set": true,
+  "answer_set_count": 1,
+  "answer_set_index": 0,
+  "expected_answer_sets": [
+    [
+      "p(1)",
+      "p(2)",
+      "q"
+    ]
+  ],
+  "expected_atoms": [
+    {
+      "atom": "q",
+      "text": "q",
+      "value": "true"
+    }
+  ],
+  "explanations": [
+    {
+      "literal": "q",
+      "expected_responses": [
+        {
+          "type": "fact",
+          "rule": "p(1)."
+        },
+        {
+          "type": "fact",
+          "rule": "p(2)."
+        },
+        {
+          "type": "aggregate",
+          "rule": "q :- #count{X : p(X)} > 1."
+        }
+      ]
+    }
+  ],
+  "aggregate_expansions": [
+    {
+      "literal": "q",
+      "rule": "q :- #count{X : p(X)} > 1.",
+      "expected": {
+        "#count{X : p(X)} > 1": {
+          "0": [
+            "p(2) is true"
+          ],
+          "1": [
+            "p(1) is true"
+          ]
+        }
+      }
+    }
+  ]
+}

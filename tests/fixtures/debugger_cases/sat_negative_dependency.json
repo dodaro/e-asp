@@ -1,0 +1,26 @@
+{
+  "name": "sat_negative_dependency",
+  "description": "Explaining a true literal derived through negation: a is true because rule 'a :- not c.' fired and c is false. Also a regression test for set_rules_for_order: with a single-letter atom 'd' the old substring matching hit the '%Add Answer Set' marker (d is inside 'Add'), silently dropping the whole answer-set section and losing the 'not c.' literal from the explanation.",
+  "program": "a :- not c.\nc | d.\n:- not d, not e.\n",
+  "debug_rules": true,
+  "debug_answer_set": true,
+  "answer_set_count": 1,
+  "answer_set_index": 0,
+  "expected_answer_sets": [
+    ["a", "d"]
+  ],
+  "expected_atoms": [
+    {"atom": "a", "value": "true"},
+    {"atom": "d", "value": "true"},
+    {"atom": "c", "value": "false"}
+  ],
+  "explanations": [
+    {
+      "literal": "a",
+      "expected_responses": [
+        {"type": "rule", "rule": "a :- not c."},
+        {"type": "literal", "rule": "not c."}
+      ]
+    }
+  ]
+}

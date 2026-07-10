@@ -1,0 +1,20 @@
+{
+  "name": "therapy_scheduling_strings",
+  "description": "Regression test for the 'grounding is not safe' bug: aggregate rules whose bodies contain anonymous variables (_), assignment aggregates (DUR = #sum{...}) and string constants must be instrumentable, and explaining a literal must not crash.",
+  "program": "x(RID,DAY,TS) : mss(DAY,TS) :- reg(RID,_).\npreparation_time(RID,DUR) :- reg(RID,_), DUR = #sum{D,PH: duration(RID,PH,D), PH != 4}.\n:- x(RID,_,TS), reg(RID,_), preparation_time(RID,T), TS-T < 1.\npatient_seat_day(ID,T,RID,DAY) : seat(ID,T) :- x(RID,DAY,_), reg(RID,T).\npatient_seat_ts(ID,T,RID,DAY,TS..TS+DUR-1) :- patient_seat_day(ID,T,RID,DAY), x(RID,DAY,TS), duration(RID,4,DUR), DUR > 0.\n:- #count{RID: patient_seat_ts(ID,T,RID,DAY,TS)} > 1, seat(ID,T), mss(DAY, TS).\nreg(\"pat1\",\"bed\").\nreg(\"pat2\",\"chair\").\nreg(\"pat3\",\"chair\").\nmss(1,1).\nmss(1,2).\nmss(1,3).\nmss(1,4).\nmss(1,5).\nmss(1,6).\nmss(1,7).\nmss(1,8).\nmss(1,9).\nduration(\"pat1\",4,5).\nduration(\"pat1\",1,2).\nduration(\"pat2\",4,3).\nduration(\"pat2\",3,1).\nduration(\"pat2\",1,2).\nduration(\"pat3\",4,4).\nduration(\"pat3\",3,2).\nduration(\"pat3\",1,2).\nseat(\"bed1\",\"bed\").\nseat(\"chair1\",\"chair\").\nseat(\"chair2\",\"chair\").\n",
+  "debug_rules": true,
+  "debug_answer_set": true,
+  "answer_set_count": 1,
+  "answer_set_index": 0,
+  "expected_atoms": [
+    {"atom": "preparation_time(\"pat1\",2)", "value": "true"},
+    {"atom": "preparation_time(\"pat2\",3)", "value": "true"},
+    {"atom": "preparation_time(\"pat3\",4)", "value": "true"}
+  ],
+  "explanations": [
+    {
+      "literal": "preparation_time(\"pat2\",3)",
+      "comment": "No expected_responses: the test only verifies that the explanation runs without the unsafe-grounding error."
+    }
+  ]
+}

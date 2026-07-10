@@ -1,0 +1,24 @@
+{
+  "name": "basic_rule",
+  "description": "Minimal satisfiable program with one derived atom explained by one rule and one fact.",
+  "program": "a.\nb :- a.\n",
+  "debug_rules": true,
+  "debug_answer_set": true,
+  "answer_set_count": 1,
+  "expected_answer_sets": [
+    ["a", "b"]
+  ],
+  "expected_atoms": [
+    {"atom": "b", "text": "b", "value": "true"}
+  ],
+  "explanations": [
+    {
+      "literal": "b",
+      "expected_responses": [
+        {"type": "rule", "rule": "b :- a."},
+        {"type": "fact", "rule": "a."}
+      ]
+    }
+  ]
+}
+
