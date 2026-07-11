@@ -129,7 +129,7 @@ def generate_discursive_explanation(api_key: str | None, model: str, temperature
     context = _llm_context()
     st.session_state.llm_prompt = build_discursive_prompt(context, language)
 
-    if api_key is None:
+    if api_key is None or api_key == "":
         api_key = _openrouter_api_key()
     if not api_key:
         st.session_state.llm_error = (

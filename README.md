@@ -26,8 +26,7 @@ minimal unsatisfiable core over those guards. On top of the symbolic
 explanation, an optional LLM integration (via OpenRouter) turns the
 generated output into a discursive, natural-language explanation.
 
-This is a Python/Streamlit reimplementation of the original Java/JavaFX
-E-ASP tool ([github repository](https://github.com/MarcoMochi/E-ASP)). The solving backend is the [`clingo` Python
+The solving backend is the [`clingo` Python
 package](https://potassco.org/clingo/) — no external solver binary is
 needed.
 
@@ -120,6 +119,14 @@ into `tests/fixtures/debugger_cases/`, rename it and fill in the expected
 values (see `tests/README.md` for the field reference). Cases with
 `"skip": true` are ignored. Note that tests require the `clingo` package,
 since they run the real solver.
+
+## Credits
+
+E-ASP was originally developed in Java/JavaFX
+([original repository](https://github.com/MarcoMochi/E-ASP)). This
+project is a full Python port of that tool; portions are derived from
+the original code base, Copyright (c) 2024 Marco Mochi, released under
+the MIT License (see `LICENSE`).
 
 ## Project structure
 

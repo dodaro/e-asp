@@ -101,6 +101,9 @@ def render_editor() -> None:
             help="Saves the current editor content. If you just typed, click anywhere first so the editor content is committed.",
         )
 
+        st.divider()
+        st.subheader("Instructions")
+
         with st.expander("Rule annotations: @ignore and @correct"):
             st.markdown(
                 """
@@ -130,13 +133,18 @@ statement** (not on their own line, and not inside a `%` comment):
         with st.expander("Supported ASP subset and limitations"):
             st.markdown(
                 """
-**Supported**: normal, choice and disjunctive rules; constraints;
-intervals (`a(1..4)`); string constants (`p("text")`); `#count` and `#sum`
-aggregates (with interactive expansion); weak constraints and
-`#minimize`/`#maximize`; `#const`; inline `%` comments; rules written
-across several lines (they are merged automatically).
+##### Supported constructs:
+- normal, choice and disjunctive rules;
+- constraints;
+- intervals (`a(1..4)`);
+- string constants (`p("text")`); 
+- `#count` and `#sum` aggregates (with interactive expansion);
+- weak constraints and `#minimize`/`#maximize`; 
+- `#const`; 
+- inline `%` comments; 
+- rules written across several lines (they are merged automatically).
 
-**Limitations**:
+##### Limitations:
 - `#min`/`#max` aggregates are treated as plain rules (no expansion).
 - Pooling (`a(1;2)`) and conditional literals in rule bodies (`p : q`)
   are not handled by the explanation machinery.
@@ -146,6 +154,16 @@ across several lines (they are merged automatically).
   atoms assigned *after* the inspected literal are not considered.
                 """
             )
+        with st.expander("Privacy and LLM usage"):
+            st.markdown(
+                """
+E-ASP is free to use. 
+The optional LLM explanation feature sends the explanation context to an external third-party service. 
+Do not use this feature with sensitive or confidential data. 
+Service availability and usage limits may apply.
+                """
+            )
+
 
 
 def render_answer_sets() -> None:
@@ -158,16 +176,18 @@ def render_answer_sets() -> None:
         return
 
     selected = st.selectbox(
-        "Answer set",
+        "Select the answer set to explain",
         range(len(answer_sets)),
         format_func=lambda index: f"Answer set {index + 1}",
         index=min(st.session_state.selected_answer_set, len(answer_sets) - 1),
+        width=250,
     )
     st.session_state.selected_answer_set = selected
 
     with st.container(border=True):
         st.code(", ".join([e if i == 0 or i % 10 != 0 else "\n" + e for i, e in enumerate(str(answer_sets[selected]).split(", "))]), language="prolog")
-        if st.button("Inspect", type="primary", width="stretch"):
+        st.space()
+        if st.button("Inspect", type="primary", width=250):
             actions.inspect_answer_set(selected)
 
 
@@ -181,8 +201,8 @@ def render_inspection() -> None:
         return
 
     justifier: Justifier = st.session_state.justifier
-    literal = st.selectbox("Literal", atoms, format_func=str)
-    if st.button("Explain literal", type="primary", width="stretch"):
+    literal = st.selectbox("Select literal to explain", atoms, format_func=str)
+    if st.button("Explain literal", type="primary", width=250):
         actions.explain_literal(literal)
 
     # For optimization problems the user can also ask why there is no answer
@@ -219,31 +239,49 @@ def render_unsat() -> None:
     render_response_groups(st.session_state.responses, allow_literal_explain=False)
 
 
+def __render_rules_and_literals(rules: list, literals: list, allow_literal_explain: bool) -> None:
+    if len(rules) > 0:
+        with st.container(border=True):
+            st.html(f"<h2>Rules ({len(rules)})</h2>")
+            _render_rule_group(rules)
+
+    if len(literals) > 0:
+        with st.container(border=True):
+            st.html(f"<h2>Selected Literals ({len(literals)})</h2>")
+            _render_code_group(literals)
+
+            if allow_literal_explain and literals:
+                st.divider()
+                selected = st.selectbox(
+                    "Next literal",
+                    literals,
+                    format_func=lambda item: item.rule,
+                )
+                if st.button(
+                        "Explain selected literal",
+                        type="primary",
+                        width="stretch",
+                ):
+                    actions.explain_next_literal(selected.rule)
+
 def render_response_groups(responses: list[Response], *, allow_literal_explain: bool) -> None:
     rules = [response for response in responses if response.type in {RULE_TYPE, AGGREGATE_TYPE}]
     facts = [response for response in responses if response.type == FACT_TYPE]
     literals = [response for response in responses if response.type == LITERAL_TYPE]
 
-    tabs = st.tabs([
-        f"Rules ({len(rules)})",
-        f"Input facts ({len(facts)})",
-        f"Literals ({len(literals)})",
-    ])
-    with tabs[0]:
-        _render_rule_group(rules)
-    with tabs[1]:
-        _render_code_group(facts)
-    with tabs[2]:
-        _render_code_group(literals)
+    if len(facts) != 0:
+        rules_column, details_column = st.columns([0.65, 0.35], gap="large")
+        with rules_column:
+            __render_rules_and_literals(rules, literals, allow_literal_explain)
+        with details_column:
+            with st.container(border=True):
+                st.html(f"<h2>Input Facts ({len(facts)})</h2>")
+                _render_code_group(facts)
+    else:
+        __render_rules_and_literals(rules, literals, allow_literal_explain)
+
 
     render_llm_explanation_panel()
-
-    if allow_literal_explain and literals:
-        st.divider()
-        st.subheader("Next Literal Explanation")
-        selected = st.selectbox("Next literal", literals, format_func=lambda item: item.rule)
-        if st.button("Explain selected literal", type="primary", width="stretch"):
-            actions.explain_next_literal(selected.rule)
 
 
 def render_aggregate(rule: str) -> None:
@@ -265,36 +303,68 @@ def render_aggregate(rule: str) -> None:
 
 
 def render_llm_explanation_panel() -> None:
-    with st.expander("LLM explanation", expanded=bool(st.session_state.llm_explanation)):
-        api_key = st.text_input("API Key (optional)", value=st.session_state.api_key)
-        language = st.selectbox("Preferred language", st.session_state.languages, index=st.session_state.languages.index("English"))
-        model = st.selectbox("Select model", st.session_state.llm_models)
-        temperature = st.slider(
-            "Temperature",
-            min_value=0.0,
-            max_value=1.5,
-            value=0.7,
-            step=0.1,
-            key="llm_temperature",
+    st.subheader("Natural-language explanation")
+
+    generate_column, settings_column = st.columns(2, width=550)
+    with settings_column:
+        with st.popover("Settings", width=250):
+            st.caption("Configure the language model and its output.")
+            api_key = st.text_input(
+                "API Key (optional)",
+                value=st.session_state.api_key,
+            )
+            language = st.selectbox(
+                "Preferred language",
+                st.session_state.languages,
+                index=st.session_state.languages.index("English"),
+            )
+            model = st.selectbox("Select model", st.session_state.llm_models)
+            temperature = st.slider(
+                "Temperature",
+                min_value=0.0,
+                max_value=1.5,
+                value=0.7,
+                step=0.1,
+                key="llm_temperature",
+            )
+
+            if st.button("Preview prompt", width=250):
+                actions.prepare_discursive_prompt(language)
+
+    with generate_column:
+        if st.button("Generate explanation", type="primary", width=250):
+            clean_api_key = api_key.strip() if api_key is not None and api_key.strip() != "" else None
+            st.session_state.api_key = clean_api_key
+            with st.spinner("Generating explanation...", show_time=True):
+                actions.generate_discursive_explanation(
+                    clean_api_key,
+                    model,
+                    float(temperature),
+                    language,
+                )
+
+    if st.session_state.llm_error:
+        st.error(
+            "An error occurred during LLM explanation. The number of daily "
+            "free tokens might be expired, try with another model or use "
+            "your own api key. If you used a custom api key, please check it is valid."
         )
-        if st.button("Generate explanation", type="primary", width="stretch"):
-            st.session_state.api_key = api_key.strip() if api_key is not None else None
-            actions.generate_discursive_explanation(api_key.strip() if api_key is not None and api_key.strip() != "" else None, model, float(temperature), language)
 
-        if st.button("Preview prompt", width="stretch"):
-            actions.prepare_discursive_prompt(language)
+    if st.session_state.llm_explanation:
+        with st.container(border=True):
+            st.markdown(st.session_state.llm_explanation)
+    else:
+        st.caption("Generate a plain-language explanation of the result.")
 
-        if st.session_state.llm_prompt:
+    if st.session_state.llm_prompt:
+        with st.expander("Advanced: LLM prompt"):
             st.text_area(
                 "Prompt prepared for the LLM",
                 value=st.session_state.llm_prompt,
                 height=260,
                 disabled=True,
+                label_visibility="collapsed",
             )
-        if st.session_state.llm_error:
-            st.error("An error occurred during LLM explanation. The number of daily free tokens might be expired, try with another model or use your own api key.")
-        if st.session_state.llm_explanation:
-            st.markdown(st.session_state.llm_explanation)
 
 
 def _render_title(title: str) -> None:
