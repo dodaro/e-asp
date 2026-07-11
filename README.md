@@ -30,6 +30,8 @@ The solving backend is the [`clingo` Python
 package](https://potassco.org/clingo/) — no external solver binary is
 needed.
 
+E-ASP is available online: [https://explain-asp.streamlit.app](https://explain-asp.streamlit.app).
+
 ## Requirements
 
 - Python ≥ 3.10
