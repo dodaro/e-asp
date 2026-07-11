@@ -97,6 +97,15 @@ The API key is looked up in this order:
 openrouter_api_key = "sk-or-..."
 ```
 
+To provide the key through the process environment instead, export it in
+the same shell before starting E-ASP:
+
+```bash
+export OPENROUTER_API_KEY="sk-or-..."
+.venv/bin/streamlit run streamlit_app.py
+```
+
+When `OPENROUTER_API_KEY` is set, no Streamlit secrets file is required.
 Do not commit `secrets.toml`. The model list and the temperature are
 configurable in the panel.
 
