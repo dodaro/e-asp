@@ -1,0 +1,43 @@
+{
+  "name": "aggregate_bindings",
+  "description": "Aggregate element ids are exposed as source-variable bindings instead of opaque positional groups.",
+  "program": "reg(\"pat1\",\"bed\").\nduration(\"pat1\",1,2).\npreparation_time(RID,DUR) :- reg(RID,_), DUR = #sum{D,PH: duration(RID,PH,D), PH != 4}.\n",
+  "debug_rules": true,
+  "debug_answer_set": true,
+  "answer_set_count": 1,
+  "answer_set_index": 0,
+  "expected_answer_sets": [
+    [
+      "duration(\"pat1\",1,2)",
+      "preparation_time(\"pat1\",2)",
+      "reg(\"pat1\",\"bed\")"
+    ]
+  ],
+  "expected_atoms": [
+    {
+      "atom": "preparation_time(\"pat1\",2)",
+      "value": "true"
+    }
+  ],
+  "aggregate_expansions": [
+    {
+      "rule": "preparation_time(RID,DUR) :- reg(RID,_), DUR = #sum{D,PH: duration(RID,PH,D), PH != 4}.",
+      "expected": {
+        "reg(\"pat1\",\"bed\"), 0 = #sum{D,PH: duration(RID,PH,D), PH != 4}": {
+          "<D=2, PH=1>": [
+            "duration(\"pat1\",1,2) is true"
+          ]
+        },
+        "reg(\"pat1\",\"bed\"), 2 = #sum{D,PH: duration(RID,PH,D), PH != 4}": {
+          "<D=2, PH=1>": [
+            "duration(\"pat1\",1,2) is true"
+          ]
+        }
+      },
+      "expected_truth": {
+        "reg(\"pat1\",\"bed\"), 0 = #sum{D,PH: duration(RID,PH,D), PH != 4}": "the aggregate is false, expand to see why",
+        "reg(\"pat1\",\"bed\"), 2 = #sum{D,PH: duration(RID,PH,D), PH != 4}": "the aggregate is true, expand to see why"
+      }
+    }
+  ]
+}

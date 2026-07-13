@@ -81,8 +81,42 @@ class Justifier:
         return core.get_rules()
 
     def expand_aggregate(self, rule: str) -> dict[str, dict[str, list[str]]]:
-        """Expand an aggregate rule into its elements with truth annotations."""
-        return self.debugger.generate_set(rule)
+        """Expand an aggregate and label each element with its bindings.
+
+        The debugger exposes the grounded tuple values as comma-separated
+        identifiers.  Pair them with the tuple terms written in the source
+        aggregate so the UI can show labels such as ``<D=2, PH=1>`` instead
+        of the opaque ``Group 2,1``.
+        """
+        expanded = self.debugger.generate_set(rule)
+        element_terms = asp_parser.aggregate_element_terms(rule)
+        if not element_terms:
+            return expanded
+
+        labelled: dict[str, dict[str, list[str]]] = {}
+        for instance, groups in expanded.items():
+            labelled_groups: dict[str, list[str]] = {}
+            for group_id, atoms in groups.items():
+                label = self._aggregate_binding_label(element_terms, group_id)
+                labelled_groups.setdefault(label, []).extend(atoms)
+            labelled[instance] = labelled_groups
+        return labelled
+
+    @staticmethod
+    def _aggregate_binding_label(element_terms: list[str], group_id: str) -> str:
+        values = asp_parser.split_top_level(group_id)
+        if len(values) != len(element_terms):
+            return group_id
+
+        bindings: list[str] = []
+        for term, value in zip(element_terms, values):
+            clean_term = term.strip()
+            clean_value = value.strip()
+            if asp_parser.variables_of(clean_term):
+                bindings.append(f"{clean_term}={clean_value}")
+            else:
+                bindings.append(clean_value)
+        return f"<{', '.join(bindings)}>"
 
     def truth_aggregate(self, rule: str, external: str) -> str:
         return self.debugger.get_truth_aggregate(rule, external)

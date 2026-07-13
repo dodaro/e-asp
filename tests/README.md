@@ -24,7 +24,8 @@ values.
   or objects with `atom`, `text`, and `value`.
 - `explanations`: literal explanations to run with expected debugger responses.
 - `aggregate_expansions`: aggregate expansion checks produced by
-  `Justifier.expand_aggregate(...)`.
+  `Justifier.expand_aggregate(...)`. Element labels expose their grounded
+  source bindings, for example `<D=2, PH=1>`.
 - `satisfiable: false` and `expected_unsat_responses`: use these for
   unsatisfiable-program debugging.
 

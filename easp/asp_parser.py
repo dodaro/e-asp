@@ -233,6 +233,32 @@ def aggregate_expression(rule: str) -> str:
     return expression.strip()
 
 
+def aggregate_element_terms(rule: str) -> list[str]:
+    """Return the tuple terms that identify an aggregate element.
+
+    For example, ``DUR = #sum{D,PH: duration(RID,PH,D)}`` yields
+    ``["D", "PH"]``.  When an aggregate contains multiple element schemas,
+    terms are returned only if every schema uses the same tuple; otherwise a
+    grounded element id cannot be mapped to one unambiguous set of names.
+    """
+    expression = aggregate_expression(rule)
+    brace = expression.find("{")
+    end = _matching_brace(expression, brace) if brace >= 0 else -1
+    if brace < 0 or end < 0:
+        return []
+
+    schemas: list[list[str]] = []
+    for element in split_top_level(expression[brace + 1 : end], ";"):
+        tuple_text = split_top_level(element, ":")[0]
+        terms = [term.strip() for term in split_top_level(tuple_text) if term.strip()]
+        if terms:
+            schemas.append(terms)
+
+    if not schemas or any(schema != schemas[0] for schema in schemas[1:]):
+        return []
+    return schemas[0]
+
+
 def search_terms(rule: str) -> dict[str, list[str]]:
     """Map each predicate appearing in the rule body (outside aggregates) to
     the list of its argument terms.

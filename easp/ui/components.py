@@ -443,6 +443,8 @@ def _aggregate_title(key: str, message: str) -> str:
 
 def _aggregate_group_label(set_id: str) -> str:
     cleaned = _clean_piece(set_id)
+    if cleaned.startswith("<") and cleaned.endswith(">"):
+        return cleaned
     return f"Group {cleaned}" if cleaned else "Group"
 
 

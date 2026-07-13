@@ -1149,44 +1149,37 @@ class Debugger:
         slack: int,
         less: bool,
     ) -> dict[str, list[str]]:
-        avoid: list[int] = []
+        used_groups: set[str] = set()
         result: dict[str, list[str]] = OrderedDict()
         counter = 0
-        order_set = 0
         # Elements never touched by the solver order are checked last.
-        last_set: list[list[str]] = []
+        last_set: list[tuple[str, str]] = []
         for key, values in entry.items():
             for atom in values:
                 if atom not in self.order and atom.removeprefix("not ") not in self.order and ("not " + atom) not in self.order:
-                    last_set.append([key, atom])
+                    last_set.append((key, atom))
 
         for check_atom in self.order:
             if not ((less and counter <= value_guard) or (not less and counter < value_guard + slack)):
                 return result
-            tmp_index = 0
-            for values in entry.values():
-                tmp_index += 1
-                if tmp_index in avoid:
-                    break
+            for key, values in entry.items():
+                if key in used_groups:
+                    continue
                 if check_atom in values:
-                    avoid.append(tmp_index)
-                    result[str(order_set)] = [check_atom + " is true"]
-                    order_set += 1
+                    used_groups.add(key)
+                    result[key] = [check_atom + " is true"]
                     counter += 1
                     break
 
-        for key_atom in last_set:
-            check_atom = key_atom[1]
+        for key, check_atom in last_set:
             if not ((less and counter <= value_guard) or (not less and counter < value_guard + slack)):
                 return result
-            if int(key_atom[0]) in avoid:
-                break
+            if key in used_groups:
+                continue
             if self._is_true_element(check_atom):
-                avoid.append(int(key_atom[0]))
-                result[str(order_set)] = [check_atom + " is true"]
-                order_set += 1
+                used_groups.add(key)
+                result[key] = [check_atom + " is true"]
                 counter += 1
-                break
         return result
 
     def find_true_agg_until_sum(
@@ -1288,40 +1281,32 @@ class Debugger:
                 temp_atom = check_atom.removeprefix("not ") if check_atom.startswith("not ") else "not " + check_atom
                 if temp_atom in values:
                     result.setdefault(key, []).append(check_atom + " is false")
-                    counter += int(key)
+                    counter += int(key.split(",", 1)[0])
                     break
         return result
 
-    def find_true_agg_all(self, entry: dict[str, list[str]], sum_agg: bool) -> dict[str, list[str]]:
+    def find_true_agg_all(self, entry: dict[str, list[str]], _sum_agg: bool) -> dict[str, list[str]]:
         """All true elements of the aggregate."""
         result: dict[str, list[str]] = OrderedDict()
-        order_set = 0
         for key, values in entry.items():
             temp: list[str] = []
             for atom in values:
                 if self._is_true_element(atom):
                     temp.append(atom.removeprefix("not ") + " is true ")
-                    if sum_agg:
-                        result[str(key)] = temp
-                    else:
-                        result[str(order_set)] = temp
-                        order_set += 1
+            if temp:
+                result[str(key)] = temp
         return result
 
-    def find_false_agg_all(self, entry: dict[str, list[str]], sum_agg: bool) -> dict[str, list[str]]:
+    def find_false_agg_all(self, entry: dict[str, list[str]], _sum_agg: bool) -> dict[str, list[str]]:
         """All false elements of the aggregate."""
         result: dict[str, list[str]] = OrderedDict()
-        order_set = 0
         for key, values in entry.items():
             temp: list[str] = []
             for atom in values:
                 if not self._is_true_element(atom):
                     temp.append(atom.removeprefix("not ") + " is false ")
-                    if sum_agg:
-                        result[str(key)] = temp
-                    else:
-                        result[str(order_set)] = temp
-                        order_set += 1
+            if temp:
+                result[str(key)] = temp
         return result
 
     def inspect_count(

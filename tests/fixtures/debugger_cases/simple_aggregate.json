@@ -45,10 +45,10 @@
       "rule": "q :- #count{X : p(X)} > 1.",
       "expected": {
         "#count{X : p(X)} > 1": {
-          "0": [
+          "<X=2>": [
             "p(2) is true"
           ],
-          "1": [
+          "<X=1>": [
             "p(1) is true"
           ]
         }
