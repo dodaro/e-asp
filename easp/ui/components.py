@@ -327,6 +327,7 @@ def render_llm_explanation_panel() -> None:
                 step=0.1,
                 key="llm_temperature",
             )
+            explanation_mode = st.selectbox("Explanation mode", options=["Oriented to ASP users", "Oriented to domain experts"], index=0)
 
             if st.button("Preview prompt", width=250):
                 actions.prepare_discursive_prompt(language)
@@ -341,6 +342,7 @@ def render_llm_explanation_panel() -> None:
                     model,
                     float(temperature),
                     language,
+                    explanation_mode == "Oriented to ASP users"
                 )
 
     if st.session_state.llm_error:

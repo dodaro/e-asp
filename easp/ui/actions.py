@@ -121,7 +121,7 @@ def explain_optimality(level: CostLevel) -> None:
         _show_error(exc)
 
 
-def generate_discursive_explanation(api_key: str | None, model: str, temperature: float, language) -> None:
+def generate_discursive_explanation(api_key: str | None, model: str, temperature: float, language: str, technical_explanation_mode: bool) -> None:
     if not st.session_state.responses and not st.session_state.answer_sets:
         st.warning("Generate answer sets or an explanation first.")
         return
@@ -149,7 +149,8 @@ def generate_discursive_explanation(api_key: str | None, model: str, temperature
             context,
             model=model.strip(),
             temperature=temperature,
-            language=language
+            language=language,
+            technical_explanation_mode=technical_explanation_mode
         )
     except LlmExplanationError as exc:
         st.session_state.llm_error = str(exc)

@@ -50,14 +50,27 @@ class OpenRouterClient:
         self.site_url = site_url
         self.timeout_seconds = timeout_seconds
 
-    def explain(self, context: ExplanationContext, model, temperature: float = 0.7, language: str = "English") -> str | None:
+    def explain(self, context: ExplanationContext, model, temperature: float = 0.7, language: str = "English", technical_explanation_mode: bool = True) -> str | None:
+        if technical_explanation_mode:
+            additional_instruction = (
+                "Assume the user knows the ASP program "
+                "but wants to understand this result."
+            )
+        else:
+            additional_instruction = (
+                "Assume the user does not know the details of the ASP program."
+                "Explain the outcome to a domain professional. "
+                "Describe only the real-world reasons behind the decision, "
+                "without exposing its ASP representation."
+            )
+
         messages = [
             {
                 "role": "system",
                 "content": (
                     f"You explain Answer Set Programming debugging results in clear {language} (or in English if you don't know this language)."
                     "Use only the supplied context. If something is not shown, say that it is not visible "
-                    "from the generated data. Prefer a concise discursive explanation over a bullet list."
+                    "from the generated data. Prefer a concise discursive explanation over a bullet list." + additional_instruction
                 ),
             },
             {
