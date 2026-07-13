@@ -51,38 +51,37 @@ class OpenRouterClient:
         self.timeout_seconds = timeout_seconds
 
     def explain(self, context: ExplanationContext, model, temperature: float = 0.7, language: str = "English", technical_explanation_mode: bool = True) -> str | None:
-        if technical_explanation_mode:
-            additional_instruction = (
-                "Assume the user knows the ASP program "
-                "but wants to understand this result."
-            )
-        else:
-            additional_instruction = (
-                "Assume the user does not know the details of the ASP program."
-                "Explain the outcome to a domain professional. "
-                "Describe only the real-world reasons behind the decision, "
-                "without exposing its ASP representation."
-            )
-
         messages = [
             {
                 "role": "system",
                 "content": (
                     f"You explain Answer Set Programming debugging results in clear {language} (or in English if you don't know this language)."
                     "Use only the supplied context. If something is not shown, say that it is not visible "
-                    "from the generated data. Prefer a concise discursive explanation over a bullet list." + additional_instruction
+                    "from the generated data. Prefer a concise discursive explanation over a bullet list."
                 ),
             },
             {
                 "role": "user",
-                "content": build_discursive_prompt(context, language),
+                "content": build_discursive_prompt(context, language, technical_explanation_mode),
             },
         ]
         client = OpenAI(base_url="https://openrouter.ai/api/v1", api_key=self.api_key)
         chat_completion = client.chat.completions.create(model=model, messages=messages, temperature= temperature)
         return chat_completion.choices[0].message.content
 
-def build_discursive_prompt(context: ExplanationContext, language: str) -> str:
+def build_discursive_prompt(context: ExplanationContext, language: str, technical_explanation_mode: bool) -> str:
+    if technical_explanation_mode:
+        additional_instruction = (
+            "Assume the user knows the ASP program "
+            "but wants to understand this result."
+        )
+    else:
+        additional_instruction = (
+            "Assume the user does not know the details of the ASP program."
+            "Explain the outcome to a domain professional. "
+            "Describe only the real-world reasons behind the decision, "
+            "without exposing its ASP representation."
+        )
     sections = [
         f"Explain the generated E-ASP result in {language} (or in English if you don't know this language).",
         "",
@@ -93,7 +92,9 @@ def build_discursive_prompt(context: ExplanationContext, language: str) -> str:
         _responses_section(context.responses),
         _aggregate_details_section(context.aggregate_details),
         "",
-        "Write a clear explanation for a user who knows the ASP program but wants to understand this result.",
+        f"{additional_instruction}",
+        "",
+        "Write a clear explanation for such a user."
     ]
     return "\n".join(section for section in sections if section)
 
