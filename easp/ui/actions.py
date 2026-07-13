@@ -127,7 +127,7 @@ def generate_discursive_explanation(api_key: str | None, model: str, temperature
         return
 
     context = _llm_context()
-    st.session_state.llm_prompt = build_discursive_prompt(context, language)
+    st.session_state.llm_prompt = build_discursive_prompt(context, language, technical_explanation_mode)
 
     if api_key is None or api_key == "":
         api_key = _openrouter_api_key()
@@ -158,13 +158,13 @@ def generate_discursive_explanation(api_key: str | None, model: str, temperature
         st.session_state.llm_error = str(exc) or exc.__class__.__name__
 
 
-def prepare_discursive_prompt(language) -> None:
+def prepare_discursive_prompt(language, technical_explanation_mode) -> None:
     if not st.session_state.responses and not st.session_state.answer_sets:
         st.warning("Generate answer sets or an explanation first.")
         return
 
     st.session_state.llm_error = ""
-    st.session_state.llm_prompt = build_discursive_prompt(_llm_context(), language)
+    st.session_state.llm_prompt = build_discursive_prompt(_llm_context(), language, technical_explanation_mode)
 
 
 def _require_justifier() -> Justifier:

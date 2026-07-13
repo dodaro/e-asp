@@ -77,7 +77,7 @@ def build_discursive_prompt(context: ExplanationContext, language: str, technica
         )
     else:
         additional_instruction = (
-            "Assume the user does not know the details of the ASP program."
+            "Assume the user does not know the details of the ASP program. "
             "Explain the outcome to a domain professional. "
             "Describe only the real-world reasons behind the decision, "
             "without exposing its ASP representation."

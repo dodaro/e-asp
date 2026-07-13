@@ -330,7 +330,7 @@ def render_llm_explanation_panel() -> None:
             explanation_mode = st.selectbox("Explanation mode", options=["Oriented to ASP users", "Oriented to domain experts"], index=0)
 
             if st.button("Preview prompt", width=250):
-                actions.prepare_discursive_prompt(language)
+                actions.prepare_discursive_prompt(language, explanation_mode == "Oriented to ASP users")
 
     with generate_column:
         if st.button("Generate explanation", type="primary", width=250):
