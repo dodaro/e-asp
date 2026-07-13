@@ -6,7 +6,7 @@ from typing import Iterable
 import streamlit as st
 
 from easp.models import FREE_CHOICE_EXPLANATION, QueryAtom, Response
-from easp.services import Justifier
+from easp.services import Justifier, partition_aggregate_values
 from easp.ui import actions
 from easp.ui.state import (
     PAGE_ANSWER_SETS,
@@ -201,9 +201,123 @@ def render_inspection() -> None:
         return
 
     justifier: Justifier = st.session_state.justifier
-    literal = st.selectbox("Select literal to explain", atoms, format_func=str)
-    if st.button("Explain literal", type="primary", width=250):
-        actions.explain_literal(literal)
+    list_column, detail_column = st.columns([0.58, 0.42], gap="large")
+
+    with list_column:
+        with st.container(border=True):
+            st.subheader("Literals")
+            query = st.text_input(
+                "Search literals",
+                placeholder="Search by predicate, argument or value…",
+                key="inspection_literal_search",
+                on_change=_reset_inspection_table_selection,
+            )
+
+            truth_column, predicate_column = st.columns([0.48, 0.52], gap="medium")
+            with truth_column:
+                truth_options = ["All", "True", "False"]
+                if any(atom.value == QueryAtom.UNDEFINED for atom in atoms):
+                    truth_options.append("Undefined")
+                truth_filter = st.segmented_control(
+                    "Truth value",
+                    truth_options,
+                    default="All",
+                    required=True,
+                    key="inspection_truth_filter",
+                    on_change=_reset_inspection_table_selection,
+                    width="stretch",
+                )
+
+            predicates = sorted({_literal_predicate(atom) for atom in atoms}, key=str.casefold)
+            predicate_counts = {
+                predicate: sum(
+                    1 for atom in atoms if _literal_predicate(atom) == predicate
+                )
+                for predicate in predicates
+            }
+            with predicate_column:
+                predicate_filter = st.selectbox(
+                    "Predicate",
+                    ["All predicates", *predicates],
+                    format_func=lambda predicate: (
+                        predicate
+                        if predicate == "All predicates"
+                        else f"{predicate} ({predicate_counts[predicate]})"
+                    ),
+                    key="inspection_predicate_filter",
+                    on_change=_reset_inspection_table_selection,
+                )
+
+            filtered_atoms = _filter_inspection_atoms(
+                atoms,
+                query=query,
+                truth_filter=truth_filter or "All",
+                predicate_filter=predicate_filter,
+            )
+            st.caption(f"Showing {len(filtered_atoms)} of {len(atoms)} literals")
+
+            selected_literal = _stored_inspection_literal(atoms)
+            if not filtered_atoms:
+                selected_literal = None
+                st.info("No literals match the current filters.")
+            else:
+                if selected_literal not in filtered_atoms:
+                    selected_literal = filtered_atoms[0]
+
+                default_row = filtered_atoms.index(selected_literal)
+                rows = [
+                    {
+                        "Status": _literal_truth_label(atom),
+                        "Predicate": _literal_predicate(atom),
+                        "Literal": str(atom),
+                    }
+                    for atom in filtered_atoms
+                ]
+                selection = st.dataframe(
+                    rows,
+                    hide_index=True,
+                    column_order=("Status", "Predicate", "Literal"),
+                    column_config={
+                        "Status": st.column_config.TextColumn(width="small"),
+                        "Predicate": st.column_config.TextColumn(width="medium"),
+                        "Literal": st.column_config.TextColumn(width="large"),
+                    },
+                    key="inspection_literal_table",
+                    on_select="rerun",
+                    selection_mode="single-row",
+                    selection_default={"selection": {"rows": [default_row]}},
+                    height=min(430, max(160, 36 * (len(rows) + 1))),
+                    row_height=35,
+                    width="stretch",
+                )
+                selected_rows = selection.selection.rows
+                if selected_rows and 0 <= selected_rows[0] < len(filtered_atoms):
+                    selected_literal = filtered_atoms[selected_rows[0]]
+
+                st.session_state.inspection_selected_literal = _literal_identity(
+                    selected_literal
+                )
+
+    with detail_column:
+        with st.container(border=True):
+            st.subheader("Selected literal")
+            if selected_literal is None:
+                st.info("Select a literal from the list to inspect it.")
+            else:
+                st.caption("Literal to explain")
+                st.code(str(selected_literal), language="prolog", wrap_lines=True)
+                st.markdown(
+                    f"**Atom status:** {_literal_truth_label(selected_literal)}  \n"
+                    f"**Predicate:** `{_literal_predicate(selected_literal)}`"
+                )
+                status_description = (
+                    "The atom is present in the selected answer set."
+                    if selected_literal.value == QueryAtom.TRUE
+                    else "The atom is not present in the selected answer set."
+                )
+                st.caption(status_description)
+                if st.button("Explain literal", type="primary", width="stretch"):
+                    actions.explain_literal(selected_literal)
 
     # For optimization problems the user can also ask why there is no answer
     # set with a better cost at a given level (as in the Java version, the
@@ -218,6 +332,79 @@ def render_inspection() -> None:
                 actions.explain_optimality(level)
         else:
             st.caption("No cost level available for this answer set.")
+
+
+def _reset_inspection_table_selection() -> None:
+    st.session_state.pop("inspection_literal_table", None)
+
+
+def _literal_identity(atom: QueryAtom) -> str:
+    return f"{atom.value}:{atom.atom}"
+
+
+def _stored_inspection_literal(atoms: list[QueryAtom]) -> QueryAtom | None:
+    selected_identity = st.session_state.get("inspection_selected_literal", "")
+    return next(
+        (atom for atom in atoms if _literal_identity(atom) == selected_identity),
+        atoms[0] if atoms else None,
+    )
+
+
+def _literal_predicate(atom: QueryAtom) -> str:
+    atom_text = atom.atom.strip().removeprefix("-").strip()
+    return atom_text.split("(", 1)[0].strip() or atom_text
+
+
+def _literal_truth_label(atom: QueryAtom) -> str:
+    labels = {
+        QueryAtom.TRUE: "True",
+        QueryAtom.FALSE: "False",
+        QueryAtom.UNDEFINED: "Undefined",
+    }
+    return labels.get(atom.value, "Unknown")
+
+
+def _filter_inspection_atoms(
+    atoms: list[QueryAtom],
+    *,
+    query: str,
+    truth_filter: str,
+    predicate_filter: str,
+) -> list[QueryAtom]:
+    return [
+        atom
+        for atom in atoms
+        if _literal_matches_query(atom, query)
+        and (truth_filter == "All" or _literal_truth_label(atom) == truth_filter)
+        and (
+            predicate_filter == "All predicates"
+            or _literal_predicate(atom) == predicate_filter
+        )
+    ]
+
+
+def _literal_matches_query(atom: QueryAtom, query: str) -> bool:
+    """Match prefixes of predicate names or argument values, not substrings.
+
+    For example, ``active`` matches ``active(1)`` but not ``inactive(1)``;
+    values inside arguments remain searchable because punctuation starts a
+    new term.
+    """
+    needle = query.strip().casefold()
+    if not needle:
+        return True
+
+    text = str(atom).casefold()
+    start = 0
+    while True:
+        index = text.find(needle, start)
+        if index < 0:
+            return False
+        if index == 0 or not (
+            text[index - 1].isalnum() or text[index - 1] == "_"
+        ):
+            return True
+        start = index + 1
 
 
 def render_explanation() -> None:
@@ -306,7 +493,7 @@ def render_aggregate(rule: str, *, show_rule: bool = True) -> None:
     for key, values, message in evaluations:
         visible_values = values
         if justifier.aggregate_uses_exact_comparison(key):
-            visible_values, false_values = _partition_aggregate_values(values)
+            visible_values, false_values = partition_aggregate_values(values)
             if false_values:
                 false_exact_elements.append((key, false_values))
 
@@ -471,24 +658,6 @@ def _aggregate_title(key: str, message: str) -> str:
     if cleaned_message.startswith(cleaned_key):
         return cleaned_message
     return f"{cleaned_key}: {cleaned_message}"
-
-
-def _partition_aggregate_values(
-    values: dict[str, list[str]],
-) -> tuple[dict[str, list[str]], dict[str, list[str]]]:
-    """Separate true and false elements of an exact (= or !=) aggregate."""
-    true_values: dict[str, list[str]] = {}
-    false_values: dict[str, list[str]] = {}
-
-    for set_id, atoms in values.items():
-        target = (
-            false_values
-            if atoms and all(_clean_piece(atom).casefold().endswith(" is false") for atom in atoms)
-            else true_values
-        )
-        target[set_id] = atoms
-
-    return true_values, false_values
 
 
 def _aggregate_element_label(set_id: str) -> str:

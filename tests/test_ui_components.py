@@ -3,12 +3,13 @@ from __future__ import annotations
 from unittest import TestCase
 from unittest.mock import patch
 
-from easp.models import Response
-from easp.models import FREE_CHOICE_EXPLANATION
+from easp.models import FREE_CHOICE_EXPLANATION, QueryAtom, Response
+from easp.services import partition_aggregate_values
 from easp.ui import components
 from easp.ui.components import (
     _aggregate_element_label,
-    _partition_aggregate_values,
+    _filter_inspection_atoms,
+    _literal_predicate,
 )
 
 
@@ -25,7 +26,7 @@ class AggregateElementLabelTests(TestCase):
 
 class AggregateElementPartitionTests(TestCase):
     def test_false_elements_are_separated_from_true_ones(self) -> None:
-        true_values, false_values = _partition_aggregate_values(
+        true_values, false_values = partition_aggregate_values(
             {
                 "<X=1>": ["p(1) is true"],
                 "<X=2>": ["p(2) is false"],
@@ -43,10 +44,56 @@ class AggregateElementPartitionTests(TestCase):
         )
 
     def test_empty_annotations_stay_in_the_primary_section(self) -> None:
-        true_values, false_values = _partition_aggregate_values({"<X=1>": []})
+        true_values, false_values = partition_aggregate_values({"<X=1>": []})
 
         self.assertEqual(true_values, {"<X=1>": []})
         self.assertEqual(false_values, {})
+
+
+class InspectionLiteralTests(TestCase):
+    def setUp(self) -> None:
+        self.atoms = [
+            QueryAtom('duration("pat1",1,2)', QueryAtom.TRUE),
+            QueryAtom('duration("pat2",1,3)', QueryAtom.FALSE),
+            QueryAtom('reg("pat1","bed")', QueryAtom.TRUE),
+            QueryAtom("ready", QueryAtom.FALSE),
+            QueryAtom("inactive(20)", QueryAtom.FALSE),
+            QueryAtom("active(20)", QueryAtom.TRUE),
+        ]
+
+    def test_predicate_is_extracted_from_atoms_with_and_without_arguments(self) -> None:
+        self.assertEqual(_literal_predicate(self.atoms[0]), "duration")
+        self.assertEqual(_literal_predicate(self.atoms[3]), "ready")
+
+    def test_search_matches_the_visible_negative_literal(self) -> None:
+        filtered = _filter_inspection_atoms(
+            self.atoms,
+            query="not duration",
+            truth_filter="All",
+            predicate_filter="All predicates",
+        )
+
+        self.assertEqual(filtered, [self.atoms[1]])
+
+    def test_truth_and_predicate_filters_can_be_combined(self) -> None:
+        filtered = _filter_inspection_atoms(
+            self.atoms,
+            query="",
+            truth_filter="True",
+            predicate_filter="duration",
+        )
+
+        self.assertEqual(filtered, [self.atoms[0]])
+
+    def test_predicate_search_does_not_match_inside_another_predicate(self) -> None:
+        filtered = _filter_inspection_atoms(
+            self.atoms,
+            query="active(20)",
+            truth_filter="All",
+            predicate_filter="All predicates",
+        )
+
+        self.assertEqual(filtered, [self.atoms[5]])
 
 
 class RuleRenderingTests(TestCase):

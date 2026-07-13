@@ -20,6 +20,7 @@ from easp.services import (
     ExplainCostService,
     Justifier,
     RetrieveAtomsService,
+    partition_aggregate_values,
 )
 from easp.ui.state import (
     PAGE_ANSWER_SETS,
@@ -31,6 +32,7 @@ from easp.ui.state import (
     current_page,
     navigate,
     reset_explanation_state,
+    reset_inspection_selection,
 )
 
 
@@ -67,6 +69,7 @@ def explain_program(include_rules: bool, include_literals: bool, answer_count: i
 def inspect_answer_set(index: int) -> None:
     try:
         clear_llm_explanation()
+        reset_inspection_selection()
         justifier = _require_justifier()
         st.session_state.answer_atoms = RetrieveAtomsService(justifier, index).run()
         st.session_state.selected_answer_set = index
@@ -219,10 +222,7 @@ def _aggregate_details_for_prompt() -> list[AggregateDetail]:
                         rule=response.rule,
                         key=key,
                         truth_message=justifier.truth_aggregate(response.rule, key),
-                        elements=[
-                            AggregateElement(label=str(group_label), atoms=list(atoms))
-                            for group_label, atoms in groups.items()
-                        ],
+                        elements=_aggregate_elements_for_prompt(justifier, key, groups),
                     )
                 )
         except Exception as exc:
@@ -235,6 +235,26 @@ def _aggregate_details_for_prompt() -> list[AggregateDetail]:
                 )
             )
     return details
+
+
+def _aggregate_elements_for_prompt(
+    justifier: Justifier,
+    key: str,
+    groups: dict[str, list[str]],
+) -> list[AggregateElement]:
+    """Return only the primary aggregate elements shown to the user.
+
+    For exact comparisons, false elements belong to the secondary UI
+    expander and are deliberately omitted from the LLM context.
+    """
+    primary_groups = groups
+    if justifier.aggregate_uses_exact_comparison(key):
+        primary_groups, _ = partition_aggregate_values(groups)
+
+    return [
+        AggregateElement(label=str(group_label), atoms=list(atoms))
+        for group_label, atoms in primary_groups.items()
+    ]
 
 
 def _is_aggregate_response(response: Response) -> bool:

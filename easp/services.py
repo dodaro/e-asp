@@ -13,6 +13,28 @@ from .debugger import Debugger
 from .models import CostLevel, QueryAtom, Response
 
 
+def partition_aggregate_values(
+    values: dict[str, list[str]],
+) -> tuple[dict[str, list[str]], dict[str, list[str]]]:
+    """Split annotated aggregate elements into true and false elements."""
+    true_values: dict[str, list[str]] = {}
+    false_values: dict[str, list[str]] = {}
+
+    for element_id, atoms in values.items():
+        target = (
+            false_values
+            if atoms
+            and all(
+                atom.strip().strip(",").strip().casefold().endswith(" is false")
+                for atom in atoms
+            )
+            else true_values
+        )
+        target[element_id] = atoms
+
+    return true_values, false_values
+
+
 class Justifier:
     """One debugging session for a single ASP program."""
 

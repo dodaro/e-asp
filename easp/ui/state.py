@@ -16,6 +16,12 @@ PAGE_COST_EXPLANATION = "cost_explanation"
 PAGE_UNSAT = "unsat"
 
 DEFAULT_FILE_NAME = "program.lp"
+INSPECTION_WIDGET_KEYS = (
+    "inspection_literal_search",
+    "inspection_truth_filter",
+    "inspection_predicate_filter",
+    "inspection_literal_table",
+)
 
 
 def init_state() -> None:
@@ -29,6 +35,7 @@ def init_state() -> None:
         "justifier": lambda: None,
         "answer_sets": list,
         "answer_atoms": list,
+        "inspection_selected_literal": str,
         "chain": list,
         "responses": list,
         "selected_answer_set": int,
@@ -76,7 +83,14 @@ def reset_explanation_state() -> None:
     st.session_state.chain = []
     st.session_state.responses = []
     st.session_state.selected_answer_set = 0
+    reset_inspection_selection()
     clear_llm_explanation()
+
+
+def reset_inspection_selection() -> None:
+    st.session_state.inspection_selected_literal = ""
+    for key in INSPECTION_WIDGET_KEYS:
+        st.session_state.pop(key, None)
 
 
 def clear_llm_explanation() -> None:
