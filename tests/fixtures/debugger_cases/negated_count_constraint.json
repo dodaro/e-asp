@@ -1,0 +1,38 @@
+{
+  "name": "negated_count_constraint",
+  "description": "A default-negated #count constraint explains a true atom through the false elements that would otherwise violate the constraint.",
+  "program": "{p(1);p(2)}.\n:- not #count{X:p(X)} >= 1.\n:- p(2).\n",
+  "debug_rules": true,
+  "debug_answer_set": true,
+  "answer_set_count": 1,
+  "answer_set_index": 0,
+  "expected_answer_sets": [
+    ["p(1)"]
+  ],
+  "expected_atoms": [
+    {"atom": "p(1)", "value": "true"}
+  ],
+  "explanations": [
+    {
+      "literal": "p(1)",
+      "expected_responses": [
+        {"type": "rule", "rule": ":- p(2)."},
+        {"type": "aggregate", "rule": ":- not #count{X:p(X)} >= 1."}
+      ]
+    }
+  ],
+  "aggregate_expansions": [
+    {
+      "literal": "p(1)",
+      "rule": ":- not #count{X:p(X)} >= 1.",
+      "expected": {
+        "not #count{X:p(X)} >= 1": {
+          "<X=2>": ["p(2) is false"]
+        }
+      },
+      "expected_truth": {
+        "not #count{X:p(X)} >= 1": "the aggregate condition is false and contributes to the result; expand to see how"
+      }
+    }
+  ]
+}

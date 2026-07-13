@@ -29,3 +29,26 @@ class AggregateExpressionTests(TestCase):
             [block for block in asp_parser.split_top_level(remaining) if block],
             ["V1 < V2"],
         )
+
+    def test_default_negation_is_part_of_the_aggregate_expression(self) -> None:
+        body = "not 2 <= #count{X: p(X)}, enabled"
+
+        self.assertEqual(
+            asp_parser.aggregate_expressions(body),
+            ["not 2 <= #count{X: p(X)}"],
+        )
+        self.assertTrue(
+            asp_parser.aggregate_is_default_negated(
+                asp_parser.aggregate_expression(body)
+            )
+        )
+
+    def test_removing_a_negated_aggregate_does_not_leave_not_behind(self) -> None:
+        body = "not #sum{W: p(W)} >= 3, enabled"
+
+        remaining = asp_parser.without_aggregate_expressions(body)
+
+        self.assertEqual(
+            [block for block in asp_parser.split_top_level(remaining) if block],
+            ["enabled"],
+        )

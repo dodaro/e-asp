@@ -5,6 +5,11 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 
 
+FREE_CHOICE_EXPLANATION = (
+    "No further explanation is available: this literal is a free choice made by the solver."
+)
+
+
 class QueryValue:
     """Truth value of an atom in the inspected answer set."""
 

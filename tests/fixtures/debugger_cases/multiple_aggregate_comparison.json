@@ -50,36 +50,12 @@
           "<X=3>": ["c(3) is true"],
           "<X=1>": ["c(1) is true"]
         },
-        "1 < 2": {},
-        "#count{X: b(X)} = 0": {
-          "<X=3>": ["b(3) is false"],
-          "<X=1>": ["b(1) is false"],
-          "<X=2>": ["b(2) is true"]
-        },
-        "#count{X: b(X)} = 2": {
-          "<X=3>": ["b(3) is false"],
-          "<X=1>": ["b(1) is false"],
-          "<X=2>": ["b(2) is true"]
-        },
-        "#count{X: c(X)} = 1": {
-          "<X=2>": ["c(2) is false"],
-          "<X=3>": ["c(3) is true"],
-          "<X=1>": ["c(1) is true"]
-        },
-        "#count{X: c(X)} = 3": {
-          "<X=2>": ["c(2) is false"],
-          "<X=3>": ["c(3) is true"],
-          "<X=1>": ["c(1) is true"]
-        }
+        "1 < 2": {}
       },
       "expected_truth": {
-        "#count{X: b(X)} = 1": "the aggregate is true, expand to see why",
-        "#count{X: c(X)} = 2": "the aggregate is true, expand to see why",
-        "1 < 2": "the comparison is true",
-        "#count{X: b(X)} = 0": "the aggregate is false, expand to see why",
-        "#count{X: b(X)} = 2": "the aggregate is false, expand to see why",
-        "#count{X: c(X)} = 1": "the aggregate is false, expand to see why",
-        "#count{X: c(X)} = 3": "the aggregate is false, expand to see why"
+        "#count{X: b(X)} = 1": "the aggregate condition is true and contributes to the result; expand to see how",
+        "#count{X: c(X)} = 2": "the aggregate condition is true and contributes to the result; expand to see how",
+        "1 < 2": "the comparison is true"
       }
     }
   ]

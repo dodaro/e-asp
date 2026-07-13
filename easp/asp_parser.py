@@ -225,9 +225,9 @@ def aggregate_expression(rule: str) -> str:
 def aggregate_expressions(text: str) -> list[str]:
     """Return every ``#count``/``#sum`` expression, guards included.
 
-    Both left and right guards are retained.  For example, the body
-    ``#count{X:b(X)} = V1, #count{X:c(X)} = V2`` yields two expressions
-    instead of silently folding the second one into the first one's context.
+    Default negation and both left and right guards are retained.  For
+    example, the body ``not 2 <= #count{X:b(X)}`` yields that complete
+    expression, while two adjacent aggregates are returned independently.
     """
     return [text[start:end].strip() for start, end in _aggregate_spans(text)]
 
@@ -240,6 +240,11 @@ def aggregate_core(expression: str) -> str:
     brace = expression.find("{", match.start())
     end = _matching_brace(expression, brace)
     return expression[match.start() : end + 1].strip() if end >= 0 else ""
+
+
+def aggregate_is_default_negated(expression: str) -> bool:
+    """Whether ``expression`` is preceded by ASP default negation."""
+    return re.match(r"\s*not\b", expression) is not None
 
 
 def without_aggregate_expressions(text: str) -> str:
@@ -326,6 +331,10 @@ def _aggregate_spans(text: str) -> list[tuple[int, int]]:
         )
         if left_guard:
             start = left_guard.start("term")
+
+        default_negation = re.search(r"(?<![A-Za-z0-9_])not\s*$", text[:start])
+        if default_negation:
+            start = default_negation.start()
 
         end = aggregate_end + 1
         right_guard = re.match(

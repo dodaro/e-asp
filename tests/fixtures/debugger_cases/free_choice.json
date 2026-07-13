@@ -1,0 +1,22 @@
+{
+  "name": "free_choice",
+  "description": "A selected choice atom has no further rule-based explanation because its truth value is freely chosen by the solver.",
+  "program": "{a}.\n",
+  "debug_rules": true,
+  "debug_answer_set": true,
+  "answer_set_count": 2,
+  "answer_set_index": 1,
+  "expected_answer_sets": [
+    [],
+    ["a"]
+  ],
+  "expected_atoms": [
+    {"atom": "a", "value": "true"}
+  ],
+  "explanations": [
+    {
+      "literal": "a",
+      "expected_responses": []
+    }
+  ]
+}

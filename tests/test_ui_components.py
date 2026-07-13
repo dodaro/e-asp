@@ -4,46 +4,52 @@ from unittest import TestCase
 from unittest.mock import patch
 
 from easp.models import Response
+from easp.models import FREE_CHOICE_EXPLANATION
 from easp.ui import components
 from easp.ui.components import (
-    _aggregate_group_label,
-    _is_false_aggregate_evaluation,
+    _aggregate_element_label,
+    _partition_aggregate_values,
 )
 
 
-class AggregateGroupLabelTests(TestCase):
+class AggregateElementLabelTests(TestCase):
     def test_binding_label_is_shown_without_group_prefix(self) -> None:
         self.assertEqual(
-            _aggregate_group_label("<D=2, PH=1>"),
+            _aggregate_element_label("<D=2, PH=1>"),
             "<D=2, PH=1>",
         )
 
-    def test_opaque_label_keeps_group_prefix_as_fallback(self) -> None:
-        self.assertEqual(_aggregate_group_label("2,1"), "Group 2,1")
+    def test_opaque_label_is_shown_as_a_tuple(self) -> None:
+        self.assertEqual(_aggregate_element_label("2,1"), "<2,1>")
 
 
-class AggregateEvaluationTests(TestCase):
-    def test_false_aggregate_message_is_secondary(self) -> None:
-        self.assertTrue(
-            _is_false_aggregate_evaluation(
-                "the aggregate is false, expand to see why"
-            )
+class AggregateElementPartitionTests(TestCase):
+    def test_false_elements_are_separated_from_true_ones(self) -> None:
+        true_values, false_values = _partition_aggregate_values(
+            {
+                "<X=1>": ["p(1) is true"],
+                "<X=2>": ["p(2) is false"],
+                "<X=3>": ["p(3) is false", "q(3) is false"],
+            }
         )
 
-    def test_true_aggregate_message_remains_primary(self) -> None:
-        self.assertFalse(
-            _is_false_aggregate_evaluation(
-                "the aggregate is true, expand to see why"
-            )
+        self.assertEqual(true_values, {"<X=1>": ["p(1) is true"]})
+        self.assertEqual(
+            false_values,
+            {
+                "<X=2>": ["p(2) is false"],
+                "<X=3>": ["p(3) is false", "q(3) is false"],
+            },
         )
 
-    def test_false_comparison_message_remains_primary(self) -> None:
-        self.assertFalse(
-            _is_false_aggregate_evaluation("the comparison is false")
-        )
+    def test_empty_annotations_stay_in_the_primary_section(self) -> None:
+        true_values, false_values = _partition_aggregate_values({"<X=1>": []})
+
+        self.assertEqual(true_values, {"<X=1>": []})
+        self.assertEqual(false_values, {})
 
 
-class RuleGroupTests(TestCase):
+class RuleRenderingTests(TestCase):
     def test_plain_rules_precede_each_aggregate_rule_with_its_details(self) -> None:
         rendered: list[tuple[str, str]] = []
         responses = [
@@ -69,3 +75,12 @@ class RuleGroupTests(TestCase):
             rendered,
             [("plain", "plain rule"), ("aggregate", "aggregate rule")],
         )
+
+    def test_empty_literal_explanation_is_reported_as_solver_choice(self) -> None:
+        with (
+            patch.object(components.st, "info") as info,
+            patch.object(components, "render_llm_explanation_panel"),
+        ):
+            components.render_response_groups([], allow_literal_explain=True)
+
+        info.assert_called_once_with(FREE_CHOICE_EXPLANATION)

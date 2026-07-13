@@ -5,7 +5,7 @@ from typing import Iterable
 
 import streamlit as st
 
-from easp.models import QueryAtom, Response
+from easp.models import FREE_CHOICE_EXPLANATION, QueryAtom, Response
 from easp.services import Justifier
 from easp.ui import actions
 from easp.ui.state import (
@@ -239,11 +239,16 @@ def render_unsat() -> None:
     render_response_groups(st.session_state.responses, allow_literal_explain=False)
 
 
-def __render_rules_and_literals(rules: list, literals: list, allow_literal_explain: bool) -> None:
+def __render_rules_and_literals(rules: list, literals: list, facts: list, allow_literal_explain: bool) -> None:
     if len(rules) > 0:
         with st.container(border=True):
             st.html(f"<h2>Rules ({len(rules)})</h2>")
             _render_rule_group(rules)
+
+    if len(facts) > 0:
+        with st.container(border=True):
+            st.html(f"<h2>Input Facts ({len(facts)})</h2>")
+            _render_code_group(facts)
 
     if len(literals) > 0:
         with st.container(border=True):
@@ -265,23 +270,18 @@ def __render_rules_and_literals(rules: list, literals: list, allow_literal_expla
                     actions.explain_next_literal(selected.rule)
 
 def render_response_groups(responses: list[Response], *, allow_literal_explain: bool) -> None:
+    if allow_literal_explain and not responses:
+        st.info(FREE_CHOICE_EXPLANATION)
+
     rules = [response for response in responses if response.type in {RULE_TYPE, AGGREGATE_TYPE}]
     facts = [response for response in responses if response.type == FACT_TYPE]
     literals = [response for response in responses if response.type == LITERAL_TYPE]
 
-    if len(facts) != 0:
-        rules_column, details_column = st.columns([0.65, 0.35], gap="large")
-        with rules_column:
-            __render_rules_and_literals(rules, literals, allow_literal_explain)
-        with details_column:
-            with st.container(border=True):
-                st.html(f"<h2>Input Facts ({len(facts)})</h2>")
-                _render_code_group(facts)
-    else:
-        __render_rules_and_literals(rules, literals, allow_literal_explain)
-
-
-    render_llm_explanation_panel()
+    rules_column, details_column = st.columns([0.65, 0.35], gap="large")
+    with rules_column:
+        __render_rules_and_literals(rules, literals, facts, allow_literal_explain)
+    with details_column:
+        render_llm_explanation_panel()
 
 
 def render_aggregate(rule: str, *, show_rule: bool = True) -> None:
@@ -301,31 +301,33 @@ def render_aggregate(rule: str, *, show_rule: bool = True) -> None:
         (key, values, justifier.truth_aggregate(rule, key))
         for key, values in aggregates.items()
     ]
-    false_evaluations = [
-        evaluation
-        for evaluation in evaluations
-        if _is_false_aggregate_evaluation(evaluation[2])
-    ]
+    false_exact_elements: list[tuple[str, dict[str, list[str]]]] = []
 
     for key, values, message in evaluations:
-        if _is_false_aggregate_evaluation(message):
-            continue
+        visible_values = values
+        if justifier.aggregate_uses_exact_comparison(key):
+            visible_values, false_values = _partition_aggregate_values(values)
+            if false_values:
+                false_exact_elements.append((key, false_values))
+
         title = _aggregate_title(key, message)
-        if not values:
+        if not visible_values:
             st.markdown(f"<strong>{escape(title)}</strong>", unsafe_allow_html=True)
             continue
         with st.expander(title):
-            _render_aggregate_values(values)
+            _render_aggregate_values(visible_values)
 
-    if false_evaluations:
-        with st.expander(f"Other aggregate evaluations ({len(false_evaluations)})"):
-            st.caption("These evaluations are not needed to explain why the rule is true.")
-            for index, (key, values, message) in enumerate(false_evaluations):
-                title = _aggregate_title(key, message).replace(", expand to see why", "")
-                st.markdown(f"<strong>{escape(title)}</strong>", unsafe_allow_html=True)
-                if values:
-                    _render_aggregate_values(values)
-                if index < len(false_evaluations) - 1:
+    if false_exact_elements:
+        element_count = sum(len(values) for _, values in false_exact_elements)
+        with st.expander(f"Other relevant literals ({element_count})"):
+            st.caption("False literals that help establish the aggregate's exact value.")
+            for index, (key, values) in enumerate(false_exact_elements):
+                st.markdown(
+                    f"<strong>{escape(_clean_piece(key))}</strong>",
+                    unsafe_allow_html=True,
+                )
+                _render_aggregate_values(values)
+                if index < len(false_exact_elements) - 1:
                     st.divider()
 
 
@@ -383,7 +385,7 @@ def render_llm_explanation_panel() -> None:
         with st.container(border=True):
             st.markdown(st.session_state.llm_explanation)
     else:
-        st.caption("Generate a plain-language explanation of the result.")
+        st.caption("Generate a natural-language explanation of the result.")
 
     if st.session_state.llm_prompt:
         with st.expander("Advanced: LLM prompt"):
@@ -451,7 +453,7 @@ def _render_aggregate_values(values: dict[str, list[str]]) -> None:
         return
 
     for set_id, atoms in values.items():
-        label = _aggregate_group_label(set_id)
+        label = _aggregate_element_label(set_id)
         text = _atom_list_text(atoms)
         st.markdown(
             f'<div class="easp-atom-row"><strong>{escape(label)}:</strong> {escape(text)}</div>',
@@ -471,15 +473,29 @@ def _aggregate_title(key: str, message: str) -> str:
     return f"{cleaned_key}: {cleaned_message}"
 
 
-def _is_false_aggregate_evaluation(message: str) -> bool:
-    return "aggregate is false" in _clean_piece(message).casefold()
+def _partition_aggregate_values(
+    values: dict[str, list[str]],
+) -> tuple[dict[str, list[str]], dict[str, list[str]]]:
+    """Separate true and false elements of an exact (= or !=) aggregate."""
+    true_values: dict[str, list[str]] = {}
+    false_values: dict[str, list[str]] = {}
+
+    for set_id, atoms in values.items():
+        target = (
+            false_values
+            if atoms and all(_clean_piece(atom).casefold().endswith(" is false") for atom in atoms)
+            else true_values
+        )
+        target[set_id] = atoms
+
+    return true_values, false_values
 
 
-def _aggregate_group_label(set_id: str) -> str:
+def _aggregate_element_label(set_id: str) -> str:
     cleaned = _clean_piece(set_id)
     if cleaned.startswith("<") and cleaned.endswith(">"):
         return cleaned
-    return f"Group {cleaned}" if cleaned else "Group"
+    return f"<{cleaned}>" if cleaned else "Element"
 
 
 def _atom_list_text(atoms: Iterable[str]) -> str:

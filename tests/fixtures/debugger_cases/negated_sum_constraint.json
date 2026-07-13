@@ -1,0 +1,38 @@
+{
+  "name": "negated_sum_constraint",
+  "description": "A default-negated #sum constraint uses the same complement semantics and weighted aggregate explanation.",
+  "program": "{p(1);p(2)}.\n:- not #sum{W:p(W)} >= 1.\n:- p(2).\n",
+  "debug_rules": true,
+  "debug_answer_set": true,
+  "answer_set_count": 1,
+  "answer_set_index": 0,
+  "expected_answer_sets": [
+    ["p(1)"]
+  ],
+  "expected_atoms": [
+    {"atom": "p(1)", "value": "true"}
+  ],
+  "explanations": [
+    {
+      "literal": "p(1)",
+      "expected_responses": [
+        {"type": "rule", "rule": ":- p(2)."},
+        {"type": "aggregate", "rule": ":- not #sum{W:p(W)} >= 1."}
+      ]
+    }
+  ],
+  "aggregate_expansions": [
+    {
+      "literal": "p(1)",
+      "rule": ":- not #sum{W:p(W)} >= 1.",
+      "expected": {
+        "not #sum{W:p(W)} >= 1": {
+          "<W=2>": ["p(2) is false"]
+        }
+      },
+      "expected_truth": {
+        "not #sum{W:p(W)} >= 1": "the aggregate condition is false and contributes to the result; expand to see how"
+      }
+    }
+  ]
+}

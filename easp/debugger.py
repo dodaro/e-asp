@@ -629,10 +629,15 @@ class Debugger:
         return "#count" in line or "#sum" in line
 
     def get_external(self, rule: str) -> str:
-        """Body of ``rule`` with the aggregate (and its guard) removed."""
-        body = rule.split(":-")[-1]
-        pattern = r",?\s*(\w+?\s*(?:!=|=|<=|>=|<|>))?\s*#(count|sum)\{[^}]*\}\s*((!=|=|<=|>=|<|>)\s*\w+)?\s*(?:,|.){1}"
-        return re.sub(pattern, "", body)
+        """Body of ``rule`` without aggregate literals and their guards."""
+        body = rule.split(":-", 1)[1] if ":-" in rule else rule
+        remaining = asp_parser.without_aggregate_expressions(body.rstrip("."))
+        blocks = [
+            block.strip()
+            for block in asp_parser.split_top_level(remaining)
+            if block.strip()
+        ]
+        return ", ".join(blocks)
 
     # ------------------------------------------------------------------
     # Minimal core computation
@@ -987,7 +992,7 @@ class Debugger:
                     self.level_to_cost[level] = self.level_to_cost.get(level, 0) + int(tmp_cost)
 
     # ------------------------------------------------------------------
-    # Aggregate expansion (the "expand to see why" feature of the UI)
+    # Aggregate expansion (causally relevant elements from Section 3.1)
     # ------------------------------------------------------------------
 
     def generate_set(self, aggregate: str) -> dict[str, dict[str, list[str]]]:
@@ -1017,11 +1022,9 @@ class Debugger:
         created: dict[str, str] = {}
         expanded: dict[str, dict[str, list[str]]] = OrderedDict()
         temp_map: dict[str, str] = {}
-        entry_truth: dict[str, bool] = {}
         entry_source_index: dict[str, int] = {}
         aggregate_keys: list[str] = []
         comparison_values: dict[str, dict[str, int]] = OrderedDict()
-        annotated_keys: set[str] = set()
 
         for grounded_atom in output.splitlines():
             if grounded_atom.startswith("#external"):
@@ -1077,38 +1080,42 @@ class Debugger:
                 )
 
                 for _side, operator, term in self._aggregate_guards(source_expression):
-                    if operator == "=" and re.fullmatch(r"[A-Z][A-Za-z0-9_]*", term):
+                    if (
+                        truth
+                        and operator == "="
+                        and re.fullmatch(r"[A-Z][A-Za-z0-9_]*", term)
+                    ):
                         comparison_values.setdefault(outside_key, {})[term] = aggregate_value
 
                 if new_key in expanded:
                     continue
 
-                guard_block = self._aggregate_guard_block(grounded_expression)
-                if "<" in guard_block or ">" in guard_block:
-                    selected: dict[str, dict[str, list[str]]] = {}
-                    inspect = self.inspect_count if is_count else self.inspect_sum
-                    legacy = self._legacy_truth(entry, guard_block, is_count)
-                    inspect(selected, new_key, entry, guard_block, internal, legacy)
-                    expanded[new_key] = selected.get(new_key, {})
-                    annotated_keys.add(new_key)
-                else:
-                    expanded[new_key] = entry
-
-                aggregate_keys.append(new_key)
-                entry_truth[new_key] = truth
-                entry_source_index[new_key] = source_index
-                temp_map[new_key] = (
-                    " the aggregate is true, expand to see why"
-                    if truth
-                    else " the aggregate is false, expand to see why"
+                expanded[new_key] = self._select_aggregate_explanation(
+                    entry,
+                    grounded_expression,
+                    count=is_count,
+                    internal=internal,
                 )
 
-        raw_entries = {
-            key: groups
-            for key, groups in expanded.items()
-            if key not in annotated_keys
-        }
-        self.set_false_true(raw_entries)
+                aggregate_keys.append(new_key)
+                entry_source_index[new_key] = source_index
+                alternative = not truth and self._has_assignment_guard(source_expression)
+                if truth:
+                    temp_map[new_key] = (
+                        " the aggregate condition is true and contributes to the result; "
+                        "expand to see how"
+                    )
+                elif alternative:
+                    # Assignment aggregates produce one false ground instance
+                    # for every value different from the actual result. Those
+                    # alternatives are not part of the explanation and are
+                    # intentionally omitted from the returned mapping.
+                    continue
+                else:
+                    temp_map[new_key] = (
+                        " the aggregate condition is false and contributes to the result; "
+                        "expand to see how"
+                    )
 
         comparison_keys: list[str] = []
         comparisons = self._aggregate_comparisons(rule_text)
@@ -1129,15 +1136,11 @@ class Debugger:
                     else " the comparison is false"
                 )
 
-        true_keys = sorted(
-            (key for key in aggregate_keys if entry_truth.get(key)),
+        main_keys = sorted(
+            (key for key in aggregate_keys if key in temp_map),
             key=entry_source_index.__getitem__,
         )
-        false_keys = sorted(
-            (key for key in aggregate_keys if not entry_truth.get(key)),
-            key=entry_source_index.__getitem__,
-        )
-        ordered_keys = [*true_keys, *comparison_keys, *false_keys]
+        ordered_keys = [*main_keys, *comparison_keys]
         ordered = OrderedDict((key, expanded[key]) for key in ordered_keys)
         self.truth_aggregate[aggregate] = {
             key: temp_map[key] for key in ordered_keys
@@ -1180,9 +1183,10 @@ class Debugger:
         operator_pattern = r"(!=|<=|>=|=|<|>)"
         guards: list[tuple[str, str, str]] = []
 
+        left_text = re.sub(r"^\s*not\b\s*", "", expression[:start], count=1)
         left = re.fullmatch(
             rf"\s*{term_pattern}\s*{operator_pattern}\s*",
-            expression[:start],
+            left_text,
         )
         if left:
             guards.append(("left", left.group(2), left.group(1)))
@@ -1195,19 +1199,277 @@ class Debugger:
             guards.append(("right", right.group(1), right.group(2)))
         return guards
 
-    def _grounded_aggregate_truth(self, expression: str, aggregate_value: int) -> bool:
-        for side, operator, term in self._aggregate_guards(expression):
+    @classmethod
+    def _normalized_numeric_guards(cls, expression: str) -> list[tuple[str, int]]:
+        """Return guards as ``aggregate OP value`` using non-strict bounds.
+
+        Guards may be written on either side of the aggregate. Strict
+        comparisons are normalized according to Section 3.1 of the paper.
+        """
+        invert = {
+            "<": ">",
+            "<=": ">=",
+            ">": "<",
+            ">=": "<=",
+            "=": "=",
+            "!=": "!=",
+        }
+        normalized: list[tuple[str, int]] = []
+        for side, operator, term in cls._aggregate_guards(expression):
             if not term.lstrip("-").isdigit():
                 continue
-            guard_value = int(term)
-            left, right = (
-                (guard_value, aggregate_value)
-                if side == "left"
-                else (aggregate_value, guard_value)
+            if side == "left":
+                operator = invert[operator]
+            value = int(term)
+            if operator == ">":
+                operator, value = ">=", value + 1
+            elif operator == "<":
+                operator, value = "<=", value - 1
+            normalized.append((operator, value))
+        return normalized
+
+    def _grounded_aggregate_truth(self, expression: str, aggregate_value: int) -> bool:
+        guards = self._normalized_numeric_guards(expression)
+        positive_truth = all(
+            self._compare_values(aggregate_value, operator, value)
+            for operator, value in guards
+        )
+        if asp_parser.aggregate_is_default_negated(expression):
+            return not positive_truth
+        return positive_truth
+
+    @staticmethod
+    def _complement_guard(guard: tuple[str, int]) -> tuple[str, int]:
+        operator, value = guard
+        complements = {
+            ">=": ("<=", value - 1),
+            "<=": (">=", value + 1),
+            "=": ("!=", value),
+            "!=": ("=", value),
+        }
+        return complements[operator]
+
+    def _effective_true_guards(
+        self,
+        expression: str,
+        aggregate_value: int,
+    ) -> list[tuple[str, int]]:
+        """Return the true guard that explains the aggregate literal.
+
+        For a false literal this is its complement (case 4). A true
+        default-negated aggregate is likewise represented by the complement
+        of the positive aggregate it negates.
+        """
+        guards = self._normalized_numeric_guards(expression)
+        if not guards:
+            return []
+
+        truths = [
+            self._compare_values(aggregate_value, operator, value)
+            for operator, value in guards
+        ]
+        positive_truth = all(truths)
+        negated = asp_parser.aggregate_is_default_negated(expression)
+        literal_truth = not positive_truth if negated else positive_truth
+
+        if literal_truth and not negated:
+            return guards
+        if not literal_truth and negated:
+            return guards
+
+        failed_index = next(
+            (index for index, holds in enumerate(truths) if not holds),
+            None,
+        )
+        if failed_index is None:
+            return []
+        return [self._complement_guard(guards[failed_index])]
+
+    @classmethod
+    def _has_assignment_guard(cls, expression: str) -> bool:
+        return any(
+            operator == "=" and re.fullmatch(r"[A-Z][A-Za-z0-9_]*", term)
+            for _side, operator, term in cls._aggregate_guards(expression)
+        )
+
+    @classmethod
+    def aggregate_uses_exact_comparison(cls, text: str) -> bool:
+        """Whether an aggregate in ``text`` is guarded by ``=`` or ``!=``."""
+        return any(
+            operator in {"=", "!="}
+            for expression in asp_parser.aggregate_expressions(text)
+            for _side, operator, _term in cls._aggregate_guards(expression)
+        )
+
+    def _select_aggregate_explanation(
+        self,
+        entry: dict[str, list[str]],
+        expression: str,
+        *,
+        count: bool,
+        internal: bool,
+    ) -> dict[str, list[str]]:
+        """Select only elements that explain the aggregate's causal role.
+
+        Once a false aggregate is replaced by its true complement, cases 1
+        and 2 of Section 3.1 share the internal branch below, while cases 3
+        and 4 share the external branch.
+        """
+        if internal:
+            relevant_entry = self._without_analyzed_aggregate_element(entry)
+        else:
+            relevant_entry = OrderedDict(
+                (key, list(values)) for key, values in entry.items()
             )
-            if not self._compare_values(left, operator, right):
-                return False
-        return True
+
+        ordered_ids = self._ordered_aggregate_element_ids(relevant_entry)
+        if not ordered_ids:
+            return {}
+
+        aggregate_value = self._aggregate_value(entry, count)
+        effective_guards = self._effective_true_guards(expression, aggregate_value)
+        if not effective_guards:
+            return self._annotate_aggregate_elements(relevant_entry, ordered_ids)
+
+        weights = {
+            element_id: self._aggregate_element_weight(element_id, count)
+            for element_id in ordered_ids
+        }
+        # The paper assumes non-negative weights. Showing all elements for a
+        # #sum outside that fragment is conservative and avoids a false
+        # minimal prefix.
+        if not count and any(weight < 0 for weight in weights.values()):
+            return self._annotate_aggregate_elements(relevant_entry, ordered_ids)
+
+        true_ids = [
+            element_id
+            for element_id in ordered_ids
+            if self._aggregate_element_is_true(relevant_entry[element_id])
+        ]
+        false_ids = [element_id for element_id in ordered_ids if element_id not in true_ids]
+        total_weight = sum(weights.values())
+        selected: set[str] = set()
+
+        for operator, value in effective_guards:
+            if operator in {"=", "!="}:
+                selected.update(ordered_ids)
+                continue
+
+            if internal:
+                # Cases 1/2: remove the explained literal from S and show all
+                # elements on the side whose value can change the aggregate.
+                selected.update(false_ids if operator == ">=" else true_ids)
+                continue
+
+            # Cases 3/4: a weighted prefix is sufficient to establish the
+            # effective true guard.
+            if operator == ">=":
+                selected.update(self._weighted_prefix(true_ids, value, weights))
+            else:  # operator == "<="
+                selected.update(
+                    self._weighted_prefix(false_ids, total_weight - value, weights)
+                )
+
+        selected_ids = [element_id for element_id in ordered_ids if element_id in selected]
+        return self._annotate_aggregate_elements(relevant_entry, selected_ids)
+
+    def _without_analyzed_aggregate_element(
+        self,
+        entry: dict[str, list[str]],
+    ) -> dict[str, list[str]]:
+        result: dict[str, list[str]] = OrderedDict()
+        for element_id, conditions in entry.items():
+            remaining = [
+                condition
+                for condition in conditions
+                if not self._condition_contains_analyzed_literal(condition)
+            ]
+            if remaining:
+                result[element_id] = remaining
+        return result
+
+    def _ordered_aggregate_element_ids(
+        self,
+        entry: dict[str, list[str]],
+    ) -> list[str]:
+        positions = {literal: index for index, literal in enumerate(self.order)}
+
+        def order_key(item: tuple[int, str]) -> tuple[int, int]:
+            fallback, element_id = item
+            candidates: list[int] = []
+            for condition in entry[element_id]:
+                for literal in asp_parser.split_top_level(condition):
+                    literal = literal.strip()
+                    if not literal:
+                        continue
+                    bare = literal.removeprefix("not ")
+                    for candidate in (literal, bare, "not " + bare):
+                        if candidate in positions:
+                            candidates.append(positions[candidate])
+            return (min(candidates, default=len(positions) + fallback), fallback)
+
+        indexed = list(enumerate(entry))
+        return [element_id for _, element_id in sorted(indexed, key=order_key)]
+
+    def _annotate_aggregate_elements(
+        self,
+        entry: dict[str, list[str]],
+        element_ids: list[str],
+    ) -> dict[str, list[str]]:
+        annotated: dict[str, list[str]] = OrderedDict()
+        for element_id in element_ids:
+            conditions = entry[element_id]
+            element_true = self._aggregate_element_is_true(conditions)
+            visible_conditions = (
+                [condition for condition in conditions if self._is_true_condition(condition)]
+                if element_true
+                else conditions
+            )
+            annotated[element_id] = [
+                self._annotate_aggregate_condition(condition)
+                for condition in visible_conditions
+            ]
+        return annotated
+
+    def _annotate_aggregate_condition(self, condition: str) -> str:
+        literals = asp_parser.split_top_level(condition)
+        if len(literals) != 1:
+            truth = "true" if self._is_true_condition(condition) else "false"
+            return f"{condition} is {truth}"
+
+        literal = literals[0].strip()
+        if literal.startswith("not "):
+            bare = literal.removeprefix("not ")
+            underlying_true = bare in self.derived_atoms or bare in self.initial_facts
+            return f"{bare} is {'true' if underlying_true else 'false'}"
+        return f"{literal} is {'true' if self._is_true_element(literal) else 'false'}"
+
+    def _aggregate_element_is_true(self, conditions: list[str]) -> bool:
+        return any(self._is_true_condition(condition) for condition in conditions)
+
+    @staticmethod
+    def _aggregate_element_weight(element_id: str, count: bool) -> int:
+        if count:
+            return 1
+        weight = element_id.split(",", 1)[0].strip()
+        return int(weight) if weight.lstrip("-").isdigit() else 0
+
+    @staticmethod
+    def _weighted_prefix(
+        element_ids: list[str],
+        required_weight: int,
+        weights: dict[str, int],
+    ) -> list[str]:
+        if required_weight <= 0:
+            return []
+        selected: list[str] = []
+        accumulated = 0
+        for element_id in element_ids:
+            selected.append(element_id)
+            accumulated += weights[element_id]
+            if accumulated >= required_weight:
+                break
+        return selected
 
     def _aggregate_guard_block(self, expression: str) -> str:
         for side, operator, term in self._aggregate_guards(expression):
@@ -1298,11 +1560,30 @@ class Debugger:
             if ":" not in block:
                 continue
             temp_id, temp_body = block.split(":", 1)
-            if not found and self.analyzed is not None and self.analyzed.atom in temp_body:
+            if not found and self._condition_contains_analyzed_literal(temp_body):
                 found = True
             set_values.setdefault(temp_id, []).append(temp_body)
         total_set[new_key] = set_values
         return found
+
+    def _condition_contains_analyzed_literal(self, condition: str) -> bool:
+        if self.analyzed is None:
+            return False
+        target = (
+            self.analyzed.atom
+            if self.analyzed.value == QueryAtom.TRUE
+            else "not " + self.analyzed.atom
+        )
+        literals = [
+            literal.strip()
+            for literal in asp_parser.split_top_level(condition)
+            if literal.strip()
+        ]
+        # Section 3.1 treats each aggregate element as one literal. A
+        # conjunction is conceptually mapped to a fresh element atom, so an
+        # analyzed literal occurring inside that conjunction is not itself an
+        # element of S.
+        return len(literals) == 1 and literals[0] == target
 
     def set_false_true(self, values: dict[str, dict[str, list[str]]]) -> None:
         """Annotate every aggregate element with its truth value in the

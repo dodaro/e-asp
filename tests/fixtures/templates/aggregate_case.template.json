@@ -27,13 +27,13 @@
       "literal": "q",
       "rule": "q :- #count{X : p(X)} > 1.",
       "expected": {
-        "": {
+        "#count{X : p(X)} > 1": {
           "<X=2>": ["p(2) is true"],
           "<X=1>": ["p(1) is true"]
         }
       },
       "expected_truth": {
-        "": "the aggregate is false, expand to see why"
+        "#count{X : p(X)} > 1": "the aggregate condition is true and contributes to the result; expand to see how"
       }
     }
   ]

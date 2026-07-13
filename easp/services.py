@@ -84,9 +84,8 @@ class Justifier:
         """Expand an aggregate and label each element with its bindings.
 
         The debugger exposes the grounded tuple values as comma-separated
-        identifiers.  Pair them with the tuple terms written in the source
-        aggregate so the UI can show labels such as ``<D=2, PH=1>`` instead
-        of the opaque ``Group 2,1``.
+        identifiers. Pair them with the tuple terms written in the source
+        aggregate so the UI can show labels such as ``<D=2, PH=1>``.
         """
         expanded = self.debugger.generate_set(rule)
         expressions = asp_parser.aggregate_expressions(rule)
@@ -130,6 +129,9 @@ class Justifier:
 
     def truth_aggregate(self, rule: str, external: str) -> str:
         return self.debugger.get_truth_aggregate(rule, external)
+
+    def aggregate_uses_exact_comparison(self, text: str) -> bool:
+        return self.debugger.aggregate_uses_exact_comparison(text)
 
 
 class ComputeAnswerSetsService:

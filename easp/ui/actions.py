@@ -6,7 +6,7 @@ import streamlit as st
 
 from easp.llm_explainer import (
     AggregateDetail,
-    AggregateGroup,
+    AggregateElement,
     ExplanationContext,
     LlmExplanationError,
     OpenRouterClient,
@@ -219,8 +219,8 @@ def _aggregate_details_for_prompt() -> list[AggregateDetail]:
                         rule=response.rule,
                         key=key,
                         truth_message=justifier.truth_aggregate(response.rule, key),
-                        groups=[
-                            AggregateGroup(label=str(group_label), atoms=list(atoms))
+                        elements=[
+                            AggregateElement(label=str(group_label), atoms=list(atoms))
                             for group_label, atoms in groups.items()
                         ],
                     )

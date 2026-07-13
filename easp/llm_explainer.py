@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from openai import OpenAI
 
-from easp.models import Response
+from easp.models import FREE_CHOICE_EXPLANATION, Response
 
 
 class LlmExplanationError(RuntimeError):
@@ -11,7 +11,7 @@ class LlmExplanationError(RuntimeError):
 
 
 @dataclass(frozen=True)
-class AggregateGroup:
+class AggregateElement:
     label: str
     atoms: list[str]
 
@@ -21,7 +21,7 @@ class AggregateDetail:
     rule: str
     key: str
     truth_message: str
-    groups: list[AggregateGroup] = field(default_factory=list)
+    elements: list[AggregateElement] = field(default_factory=list)
     error: str = ""
 
 
@@ -89,7 +89,10 @@ def build_discursive_prompt(context: ExplanationContext, language: str, technica
         _program_section(context.program),
         _answer_sets_section(context.answer_sets, context.selected_answer_set),
         _chain_section(context.chain),
-        _responses_section(context.responses),
+        _responses_section(
+            context.responses,
+            free_choice=context.page == "explanation",
+        ),
         _aggregate_details_section(context.aggregate_details),
         "",
         f"{additional_instruction}",
@@ -123,8 +126,14 @@ def _chain_section(chain: list[str]) -> str:
     return "Explanation chain: " + " -> ".join(chain)
 
 
-def _responses_section(responses: list[Response]) -> str:
+def _responses_section(
+    responses: list[Response],
+    *,
+    free_choice: bool = False,
+) -> str:
     if not responses:
+        if free_choice:
+            return "Generated explanation: " + FREE_CHOICE_EXPLANATION
         return ""
 
     lines = ["Generated explanations:"]
@@ -149,13 +158,13 @@ def _aggregate_details_section(details: list[AggregateDetail]) -> str:
             lines.append(f"   Expansion error: {detail.error}")
             continue
 
-        if not detail.groups:
+        if not detail.elements:
             continue
 
-        lines.append("   Expanded groups:")
-        for group in detail.groups:
-            label = _clean_piece(group.label) or "group"
-            atoms = [_clean_piece(atom) for atom in group.atoms]
+        lines.append("   Relevant aggregate elements:")
+        for element in detail.elements:
+            label = _clean_piece(element.label) or "element"
+            atoms = [_clean_piece(atom) for atom in element.atoms]
             visible_atoms = [atom for atom in atoms if atom]
             atom_text = ", ".join(visible_atoms) if visible_atoms else "no atoms"
             lines.append(f"   - {label}: {atom_text}")
