@@ -284,8 +284,9 @@ def render_response_groups(responses: list[Response], *, allow_literal_explain: 
     render_llm_explanation_panel()
 
 
-def render_aggregate(rule: str) -> None:
-    st.code(rule, language="prolog")
+def render_aggregate(rule: str, *, show_rule: bool = True) -> None:
+    if show_rule:
+        st.code(rule, language="prolog")
     justifier: Justifier = st.session_state.justifier
     try:
         aggregates = justifier.expand_aggregate(rule)
@@ -296,13 +297,36 @@ def render_aggregate(rule: str) -> None:
     if not aggregates:
         return
 
-    for key, values in aggregates.items():
-        title = _aggregate_title(key, justifier.truth_aggregate(rule, key))
+    evaluations = [
+        (key, values, justifier.truth_aggregate(rule, key))
+        for key, values in aggregates.items()
+    ]
+    false_evaluations = [
+        evaluation
+        for evaluation in evaluations
+        if _is_false_aggregate_evaluation(evaluation[2])
+    ]
+
+    for key, values, message in evaluations:
+        if _is_false_aggregate_evaluation(message):
+            continue
+        title = _aggregate_title(key, message)
         if not values:
             st.markdown(f"<strong>{escape(title)}</strong>", unsafe_allow_html=True)
             continue
         with st.expander(title):
             _render_aggregate_values(values)
+
+    if false_evaluations:
+        with st.expander(f"Other aggregate evaluations ({len(false_evaluations)})"):
+            st.caption("These evaluations are not needed to explain why the rule is true.")
+            for index, (key, values, message) in enumerate(false_evaluations):
+                title = _aggregate_title(key, message).replace(", expand to see why", "")
+                st.markdown(f"<strong>{escape(title)}</strong>", unsafe_allow_html=True)
+                if values:
+                    _render_aggregate_values(values)
+                if index < len(false_evaluations) - 1:
+                    st.divider()
 
 
 def render_llm_explanation_panel() -> None:
@@ -403,11 +427,14 @@ def _render_rule_group(responses: list[Response]) -> None:
     if not responses:
         st.caption("Empty")
         return
+
+    for response in responses:
+        if response.type != AGGREGATE_TYPE:
+            st.code(response.rule, language="prolog")
+
     for response in responses:
         if response.type == AGGREGATE_TYPE:
             render_aggregate(response.rule)
-        else:
-            st.code(response.rule, language="prolog")
 
 
 def _render_code_group(responses: list[Response]) -> None:
@@ -442,6 +469,10 @@ def _aggregate_title(key: str, message: str) -> str:
     if cleaned_message.startswith(cleaned_key):
         return cleaned_message
     return f"{cleaned_key}: {cleaned_message}"
+
+
+def _is_false_aggregate_evaluation(message: str) -> bool:
+    return "aggregate is false" in _clean_piece(message).casefold()
 
 
 def _aggregate_group_label(set_id: str) -> str:
