@@ -677,6 +677,8 @@ class Debugger:
 
         minimal_core = self._minimal_core(extended_program)
         self._add_debug_rules_to_core(unsat_core, minimal_core, atom=atom)
+        if atom is not None and self.debug_answer_set:
+            self._add_aggregate_literals_to_core(unsat_core)
         if expand_constraints and self.debug_rules:
             self._add_defining_rules_for_core_constraints(unsat_core, extended_program)
         return unsat_core
@@ -784,6 +786,34 @@ class Debugger:
                         unsat_core.add_rule(display, 2)
                     else:
                         unsat_core.add_rule("not " + display, 2)
+
+    def _add_aggregate_literals_to_core(self, unsat_core: UnsatisfiableCore) -> None:
+        """Include true derived literals used by aggregate explanations.
+
+        A minimal core may select only one side of a disjunctive derivation,
+        even when another derived atom contributes to a count.  Expanding the
+        aggregate reveals that contribution, so surface it in Selected
+        Literals as well and rely on the core's uniqueness guarantee to avoid
+        duplicates.
+        """
+        for response in list(unsat_core.rules):
+            if response.type != 3:
+                continue
+            try:
+                expanded = self.generate_set(response.rule)
+            except Exception:
+                continue
+            for groups in expanded.values():
+                for annotations in groups.values():
+                    for annotation in annotations:
+                        match = re.match(r"^(.*?)\s+is true\s*$", annotation)
+                        if not match:
+                            continue
+                        condition = match.group(1).strip()
+                        for literal in asp_parser.split_top_level(condition):
+                            literal = literal.strip()
+                            if literal in self.derived_atoms:
+                                self._add_unique_response(unsat_core, literal + ".", 2)
 
     def _add_defining_rules_for_core_constraints(
         self,
@@ -966,18 +996,17 @@ class Debugger:
         annotated with their truth value.
 
         The returned mapping is ``instance-key -> element-id -> [atom texts]``.
-        When the aggregate has a </> guard, a reduced mapping containing only
-        the atoms relevant to satisfy/violate the guard is returned instead.
+        Every #count/#sum expression in the rule is expanded independently;
+        assignment variables shared by multiple aggregates are also resolved
+        in the comparisons that relate them (for example ``1 < 2``).
         """
-        total_set: dict[str, dict[str, list[str]]] = {}
-        opt_set: dict[str, dict[str, list[str]]] = {}
         # `aggregate` comes from a __debug string: restore double quotes so
         # the rule is parseable again.
         rule_text = self._restore_quotes(aggregate)
-        # Aggregate atom as written in the rule (e.g. "DUR = #sum{...}");
-        # shown in the instance key so the user sees which aggregate the
-        # expansion refers to.
-        agg_expression = asp_parser.aggregate_expression(rule_text)
+        source_expressions = asp_parser.aggregate_expressions(rule_text)
+        if not source_expressions:
+            return {}
+
         builder = [rule_text]
         for section in (self.initial_facts, self.derived_atoms, self.false_atoms):
             for rule in section:
@@ -985,10 +1014,14 @@ class Debugger:
                     builder.append(f"#external {rule}.")
 
         output = self.runner.ground_text("\n".join(builder) + "\n")
-        pattern = re.compile(r"\{(.*?)\}")
-        to_delete = ""
         created: dict[str, str] = {}
+        expanded: dict[str, dict[str, list[str]]] = OrderedDict()
         temp_map: dict[str, str] = {}
+        entry_truth: dict[str, bool] = {}
+        entry_source_index: dict[str, int] = {}
+        aggregate_keys: list[str] = []
+        comparison_values: dict[str, dict[str, int]] = OrderedDict()
+        annotated_keys: set[str] = set()
 
         for grounded_atom in output.splitlines():
             if grounded_atom.startswith("#external"):
@@ -1000,9 +1033,6 @@ class Debugger:
                     created[grounded_atom.split(":-", 1)[0].strip()] = grounded_atom.split(":-", 1)[1].strip()
                 continue
 
-            matcher = pattern.search(grounded_atom)
-            if not matcher:
-                continue
             if ":-" in grounded_atom:
                 tmp_outside = grounded_atom.split(":-", 1)[1]
             elif "<=>" in grounded_atom:
@@ -1014,71 +1044,244 @@ class Debugger:
                 if key in tmp_outside:
                     tmp_outside = tmp_outside.replace(key, value[:-1])
 
-            # Strip the aggregate itself, keeping the rest of the body: it
-            # identifies the rule instance this aggregate belongs to.
-            outside = []
-            copy = True
-            for char in tmp_outside[:-1]:
-                if char == "#":
-                    copy = False
-                if char == "}":
-                    copy = True
+            grounded_expressions = asp_parser.aggregate_expressions(tmp_outside)
+            if len(grounded_expressions) != len(source_expressions):
+                continue
+
+            outside_text = asp_parser.without_aggregate_expressions(tmp_outside.rstrip("."))
+            outside_blocks = [
+                block for block in asp_parser.split_top_level(outside_text) if block.strip()
+            ]
+            outside_key = ", ".join(outside_blocks)
+
+            for source_index, (source_expression, grounded_expression) in enumerate(
+                zip(source_expressions, grounded_expressions)
+            ):
+                aggregate_body = self._aggregate_body(grounded_expression)
+                holder: dict[str, dict[str, list[str]]] = {}
+                internal = self.get_id_set(aggregate_body, "entry", holder)
+                entry = holder.get("entry", {})
+
+                instantiated = self._instantiated_aggregate(
+                    source_expression,
+                    grounded_expression,
+                )
+                key_parts = [*outside_blocks, instantiated]
+                new_key = ", ".join(part for part in key_parts if part)
+
+                is_count = "#count" in source_expression
+                aggregate_value = self._aggregate_value(entry, is_count)
+                truth = self._grounded_aggregate_truth(
+                    grounded_expression,
+                    aggregate_value,
+                )
+
+                for _side, operator, term in self._aggregate_guards(source_expression):
+                    if operator == "=" and re.fullmatch(r"[A-Z][A-Za-z0-9_]*", term):
+                        comparison_values.setdefault(outside_key, {})[term] = aggregate_value
+
+                if new_key in expanded:
                     continue
-                if copy:
-                    outside.append(char)
-            outside_text = "".join(outside)
 
-            # Separate the comparison/assignment block of the aggregate
-            # (e.g. "> 1" or "4 =") from the rest of the body: the remaining
-            # literals identify this ground instance of the rule and are used
-            # as the key shown in the UI.
-            blocks = asp_parser.split_top_level(outside_text)
-            guard_block = ""
-            for block in blocks:
-                if any(operator in block for operator in ["=", "<", ">"]):
-                    guard_block = block
-            if guard_block:
-                to_delete = guard_block
+                guard_block = self._aggregate_guard_block(grounded_expression)
+                if "<" in guard_block or ">" in guard_block:
+                    selected: dict[str, dict[str, list[str]]] = {}
+                    inspect = self.inspect_count if is_count else self.inspect_sum
+                    legacy = self._legacy_truth(entry, guard_block, is_count)
+                    inspect(selected, new_key, entry, guard_block, internal, legacy)
+                    expanded[new_key] = selected.get(new_key, {})
+                    annotated_keys.add(new_key)
+                else:
+                    expanded[new_key] = entry
 
-            temp = matcher.group()[1:-1]
-            # Instance key: the body literals outside the aggregate plus the
-            # aggregate expression with the grounded guard value filled in
-            # (e.g. 'reg("pat1","bed"), 2 = #sum{...}').
-            key_parts = [block for block in blocks if block != guard_block]
-            instantiated = self._instantiated_aggregate(agg_expression, guard_block)
-            if instantiated:
-                key_parts.append(instantiated)
-            new_key = ", ".join(key_parts)
-            internal = self.get_id_set(temp, new_key, total_set)
-
-            if "#count" in aggregate or "#sum" in aggregate:
-                is_count = "#count" in aggregate
-                entry = total_set.get(new_key, {})
-                # Message: truth == "the grounded aggregate holds in the
-                # answer set". (The Java version reported #sum inverted,
-                # compensating a counting bug that ignored facts and negated
-                # literals; both are fixed in check_truth.)
-                truth = self.check_truth(entry, to_delete, is_count)
+                aggregate_keys.append(new_key)
+                entry_truth[new_key] = truth
+                entry_source_index[new_key] = source_index
                 temp_map[new_key] = (
                     " the aggregate is true, expand to see why"
                     if truth
                     else " the aggregate is false, expand to see why"
                 )
-                if ">" in to_delete or "<" in to_delete:
-                    # Branch selection: the tables in inspect_count/inspect_sum
-                    # were tuned against the original (derived-atoms-only)
-                    # truth computation, so that legacy value is kept for them.
-                    inspect = self.inspect_count if is_count else self.inspect_sum
-                    legacy = self._legacy_truth(entry, to_delete, is_count)
-                    inspect(opt_set, new_key, entry, to_delete, internal, legacy)
 
-        self.truth_aggregate[aggregate] = temp_map
-        self.set_false_true(total_set)
-        return opt_set if (">" in to_delete or "<" in to_delete) else total_set
+        raw_entries = {
+            key: groups
+            for key, groups in expanded.items()
+            if key not in annotated_keys
+        }
+        self.set_false_true(raw_entries)
+
+        comparison_keys: list[str] = []
+        comparisons = self._aggregate_comparisons(rule_text)
+        for outside_key, values in comparison_values.items():
+            for comparison in comparisons:
+                instantiated = self._instantiate_comparison(comparison, values)
+                if instantiated is None:
+                    continue
+                left, operator, right = instantiated
+                expression = f"{left} {operator} {right}"
+                key = ", ".join(part for part in (outside_key, expression) if part)
+                truth = self._compare_values(left, operator, right)
+                expanded[key] = {}
+                comparison_keys.append(key)
+                temp_map[key] = (
+                    " the comparison is true"
+                    if truth
+                    else " the comparison is false"
+                )
+
+        true_keys = sorted(
+            (key for key in aggregate_keys if entry_truth.get(key)),
+            key=entry_source_index.__getitem__,
+        )
+        false_keys = sorted(
+            (key for key in aggregate_keys if not entry_truth.get(key)),
+            key=entry_source_index.__getitem__,
+        )
+        ordered_keys = [*true_keys, *comparison_keys, *false_keys]
+        ordered = OrderedDict((key, expanded[key]) for key in ordered_keys)
+        self.truth_aggregate[aggregate] = {
+            key: temp_map[key] for key in ordered_keys
+        }
+        return ordered
 
     def get_truth_aggregate(self, rule: str, key: str) -> str:
         """Truth message computed by the last generate_set call for ``rule``."""
         return self.truth_aggregate.get(rule, {}).get(key, "")
+
+    @staticmethod
+    def _aggregate_body(expression: str) -> str:
+        core = asp_parser.aggregate_core(expression)
+        brace = core.find("{")
+        end = asp_parser._matching_brace(core, brace) if brace >= 0 else -1
+        return core[brace + 1 : end] if brace >= 0 and end >= 0 else ""
+
+    def _aggregate_value(self, mapping: dict[str, list[str]], count: bool) -> int:
+        value = 0
+        for key, conditions in mapping.items():
+            if not any(self._is_true_condition(condition) for condition in conditions):
+                continue
+            if count:
+                value += 1
+                continue
+            weight = key.split(",", 1)[0].strip()
+            if weight.lstrip("-").isdigit():
+                value += int(weight)
+        return value
+
+    @staticmethod
+    def _aggregate_guards(expression: str) -> list[tuple[str, str, str]]:
+        """Return ``(side, operator, term)`` for an aggregate's guards."""
+        core = asp_parser.aggregate_core(expression)
+        if not core:
+            return []
+        start = expression.find(core)
+        end = start + len(core)
+        term_pattern = r"([A-Za-z_][A-Za-z0-9_]*|-?\d+)"
+        operator_pattern = r"(!=|<=|>=|=|<|>)"
+        guards: list[tuple[str, str, str]] = []
+
+        left = re.fullmatch(
+            rf"\s*{term_pattern}\s*{operator_pattern}\s*",
+            expression[:start],
+        )
+        if left:
+            guards.append(("left", left.group(2), left.group(1)))
+
+        right = re.fullmatch(
+            rf"\s*{operator_pattern}\s*{term_pattern}\s*",
+            expression[end:],
+        )
+        if right:
+            guards.append(("right", right.group(1), right.group(2)))
+        return guards
+
+    def _grounded_aggregate_truth(self, expression: str, aggregate_value: int) -> bool:
+        for side, operator, term in self._aggregate_guards(expression):
+            if not term.lstrip("-").isdigit():
+                continue
+            guard_value = int(term)
+            left, right = (
+                (guard_value, aggregate_value)
+                if side == "left"
+                else (aggregate_value, guard_value)
+            )
+            if not self._compare_values(left, operator, right):
+                return False
+        return True
+
+    def _aggregate_guard_block(self, expression: str) -> str:
+        for side, operator, term in self._aggregate_guards(expression):
+            if "<" in operator or ">" in operator:
+                return f"{term}{operator}" if side == "left" else f"{operator}{term}"
+        return ""
+
+    def _aggregate_comparisons(self, rule: str) -> list[str]:
+        assignment_variables = {
+            term
+            for expression in asp_parser.aggregate_expressions(rule)
+            for _side, operator, term in self._aggregate_guards(expression)
+            if operator == "=" and re.fullmatch(r"[A-Z][A-Za-z0-9_]*", term)
+        }
+        if not assignment_variables:
+            return []
+
+        body = asp_parser.without_aggregate_expressions(asp_parser.body_of(rule))
+        comparisons: list[str] = []
+        pattern = re.compile(
+            r"^\s*([A-Z][A-Za-z0-9_]*|-?\d+)\s*"
+            r"(!=|<=|>=|=|<|>)\s*"
+            r"([A-Z][A-Za-z0-9_]*|-?\d+)\s*$"
+        )
+        for block in asp_parser.split_top_level(asp_parser.strip_final_dot(body)):
+            match = pattern.fullmatch(block)
+            if not match:
+                continue
+            variables = {
+                term
+                for term in (match.group(1), match.group(3))
+                if re.fullmatch(r"[A-Z][A-Za-z0-9_]*", term)
+            }
+            if variables and variables.issubset(assignment_variables):
+                comparisons.append(block.strip())
+        return comparisons
+
+    @staticmethod
+    def _instantiate_comparison(
+        comparison: str,
+        values: dict[str, int],
+    ) -> tuple[str, str, str] | None:
+        match = re.fullmatch(
+            r"\s*([A-Z][A-Za-z0-9_]*|-?\d+)\s*"
+            r"(!=|<=|>=|=|<|>)\s*"
+            r"([A-Z][A-Za-z0-9_]*|-?\d+)\s*",
+            comparison,
+        )
+        if not match:
+            return None
+
+        resolved: list[str] = []
+        for term in (match.group(1), match.group(3)):
+            if term in values:
+                resolved.append(str(values[term]))
+            elif term.lstrip("-").isdigit():
+                resolved.append(term)
+            else:
+                return None
+        return resolved[0], match.group(2), resolved[1]
+
+    @staticmethod
+    def _compare_values(left: int | str, operator: str, right: int | str) -> bool:
+        left_value = int(left)
+        right_value = int(right)
+        comparisons = {
+            "=": left_value == right_value,
+            "!=": left_value != right_value,
+            "<": left_value < right_value,
+            "<=": left_value <= right_value,
+            ">": left_value > right_value,
+            ">=": left_value >= right_value,
+        }
+        return comparisons[operator]
 
     def get_id_set(
         self,
@@ -1521,30 +1724,50 @@ class Debugger:
                     self._add_unique(self.unsupported_false, head)
                     break
 
-    @staticmethod
-    def _instantiated_aggregate(agg_expression: str, guard_block: str) -> str:
+    @classmethod
+    def _instantiated_aggregate(
+        cls,
+        source_expression: str,
+        grounded_expression: str,
+    ) -> str:
         """Combine the aggregate expression written in the rule with the
-        guard value found in one ground instance.
+        assignment value found in one ground instance.
 
         For an assignment aggregate the variable is replaced by its value:
-        ``DUR = #sum{...}`` + grounded guard ``2=`` -> ``2 = #sum{...}``.
+        ``DUR = #sum{...}`` + ``2=#sum{...}`` -> ``2 = #sum{...}``, and
+        ``#count{...} = V1`` + ``#count{...}=1`` -> ``#count{...} = 1``.
         For constant guards the original expression is kept as written."""
-        if not agg_expression:
+        if not source_expression:
             return ""
-        if not guard_block:
-            return agg_expression
-        # gringo prints the guard either as "<value><op>" or "<op><value>".
-        match = re.match(r"^\s*([^\s<>!=]+)\s*(?:!=|<=|>=|=|<|>)\s*$", guard_block)
-        if not match:
-            match = re.match(r"^\s*(?:!=|<=|>=|=|<|>)\s*([^\s<>!=]+)\s*$", guard_block)
-        if not match:
-            return agg_expression
-        value = match.group(1)
-        # Replace a variable guard (e.g. DUR) with the grounded value.
-        guard_var = re.match(r"^([A-Z][A-Za-z0-9_]*)\s*(?:!=|<=|>=|=|<|>)\s*#", agg_expression)
-        if guard_var:
-            return value + agg_expression[len(guard_var.group(1)) :]
-        return agg_expression
+
+        result = source_expression.strip()
+        grounded_guards = cls._aggregate_guards(grounded_expression)
+        for side, operator, term in cls._aggregate_guards(source_expression):
+            if not re.fullmatch(r"[A-Z][A-Za-z0-9_]*", term):
+                continue
+            grounded = next(
+                (
+                    candidate
+                    for candidate in grounded_guards
+                    if candidate[0] == side and candidate[1] == operator
+                ),
+                next(
+                    (
+                        candidate
+                        for candidate in grounded_guards
+                        if candidate[1] == operator
+                    ),
+                    None,
+                ),
+            )
+            if grounded is None:
+                continue
+            value = grounded[2]
+            if side == "left":
+                result = re.sub(rf"^\s*{re.escape(term)}\b", value, result, count=1)
+            else:
+                result = re.sub(rf"\b{re.escape(term)}\s*$", value, result, count=1)
+        return result
 
     @staticmethod
     def _restore_quotes(text: str) -> str:

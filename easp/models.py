@@ -61,7 +61,9 @@ class UnsatisfiableCore:
     rules: list[Response] = field(default_factory=list)
 
     def add_rule(self, rule: str, type_: int) -> None:
-        self.rules.append(Response(rule, type_))
+        response = Response(rule, type_)
+        if response not in self.rules:
+            self.rules.append(response)
 
     def get_rules(self) -> list[Response]:
         return self.rules

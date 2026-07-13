@@ -89,18 +89,28 @@ class Justifier:
         of the opaque ``Group 2,1``.
         """
         expanded = self.debugger.generate_set(rule)
-        element_terms = asp_parser.aggregate_element_terms(rule)
-        if not element_terms:
-            return expanded
+        expressions = asp_parser.aggregate_expressions(rule)
 
         labelled: dict[str, dict[str, list[str]]] = {}
         for instance, groups in expanded.items():
+            element_terms = self._aggregate_terms_for_instance(expressions, instance)
+            if not element_terms:
+                labelled[instance] = groups
+                continue
             labelled_groups: dict[str, list[str]] = {}
             for group_id, atoms in groups.items():
                 label = self._aggregate_binding_label(element_terms, group_id)
                 labelled_groups.setdefault(label, []).extend(atoms)
             labelled[instance] = labelled_groups
         return labelled
+
+    @staticmethod
+    def _aggregate_terms_for_instance(expressions: list[str], instance: str) -> list[str]:
+        for expression in expressions:
+            core = asp_parser.aggregate_core(expression)
+            if core and core in instance:
+                return asp_parser.aggregate_element_terms(expression)
+        return []
 
     @staticmethod
     def _aggregate_binding_label(element_terms: list[str], group_id: str) -> str:

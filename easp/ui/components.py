@@ -298,6 +298,9 @@ def render_aggregate(rule: str) -> None:
 
     for key, values in aggregates.items():
         title = _aggregate_title(key, justifier.truth_aggregate(rule, key))
+        if not values:
+            st.markdown(f"<strong>{escape(title)}</strong>", unsafe_allow_html=True)
+            continue
         with st.expander(title):
             _render_aggregate_values(values)
 

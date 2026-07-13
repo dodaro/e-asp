@@ -218,19 +218,36 @@ def aggregate_expression(rule: str) -> str:
     """Return the aggregate atom of ``rule`` as written, including its
     guards: e.g. ``DUR = #sum{D,PH: duration(R,PH,D), PH != 4}`` or
     ``#count{X : p(X)} > 1``. Empty string when the rule has no aggregate."""
-    match = re.search(r"(-?\w+\s*(?:!=|<=|>=|=|<|>)\s*)?#(?:count|sum)\{", rule)
+    expressions = aggregate_expressions(rule)
+    return expressions[0] if expressions else ""
+
+
+def aggregate_expressions(text: str) -> list[str]:
+    """Return every ``#count``/``#sum`` expression, guards included.
+
+    Both left and right guards are retained.  For example, the body
+    ``#count{X:b(X)} = V1, #count{X:c(X)} = V2`` yields two expressions
+    instead of silently folding the second one into the first one's context.
+    """
+    return [text[start:end].strip() for start, end in _aggregate_spans(text)]
+
+
+def aggregate_core(expression: str) -> str:
+    """Return an aggregate without its left/right guards."""
+    match = re.search(r"#(?:count|sum)\{", expression)
     if not match:
         return ""
-    brace = rule.find("{", match.start())
-    end = _matching_brace(rule, brace)
-    if end < 0:
-        return ""
-    expression = rule[match.start() : end + 1]
-    # Guard on the right of the aggregate (e.g. "} > 1").
-    tail = re.match(r"\s*(?:!=|<=|>=|=|<|>)\s*-?\w+", rule[end + 1 :])
-    if tail:
-        expression += tail.group(0)
-    return expression.strip()
+    brace = expression.find("{", match.start())
+    end = _matching_brace(expression, brace)
+    return expression[match.start() : end + 1].strip() if end >= 0 else ""
+
+
+def without_aggregate_expressions(text: str) -> str:
+    """Replace every aggregate expression (including its guards) with space."""
+    characters = list(text)
+    for start, end in _aggregate_spans(text):
+        characters[start:end] = " " * (end - start)
+    return "".join(characters)
 
 
 def aggregate_element_terms(rule: str) -> list[str]:
@@ -241,18 +258,18 @@ def aggregate_element_terms(rule: str) -> list[str]:
     terms are returned only if every schema uses the same tuple; otherwise a
     grounded element id cannot be mapped to one unambiguous set of names.
     """
-    expression = aggregate_expression(rule)
-    brace = expression.find("{")
-    end = _matching_brace(expression, brace) if brace >= 0 else -1
-    if brace < 0 or end < 0:
-        return []
-
     schemas: list[list[str]] = []
-    for element in split_top_level(expression[brace + 1 : end], ";"):
-        tuple_text = split_top_level(element, ":")[0]
-        terms = [term.strip() for term in split_top_level(tuple_text) if term.strip()]
-        if terms:
-            schemas.append(terms)
+    for expression in aggregate_expressions(rule):
+        core = aggregate_core(expression)
+        brace = core.find("{")
+        end = _matching_brace(core, brace) if brace >= 0 else -1
+        if brace < 0 or end < 0:
+            continue
+        for element in split_top_level(core[brace + 1 : end], ";"):
+            tuple_text = split_top_level(element, ":")[0]
+            terms = [term.strip() for term in split_top_level(tuple_text) if term.strip()]
+            if terms:
+                schemas.append(terms)
 
     if not schemas or any(schema != schemas[0] for schema in schemas[1:]):
         return []
@@ -283,6 +300,44 @@ def search_terms(rule: str) -> dict[str, list[str]]:
 # ---------------------------------------------------------------------------
 # Internal helpers
 # ---------------------------------------------------------------------------
+
+
+def _aggregate_spans(text: str) -> list[tuple[int, int]]:
+    """Half-open spans of aggregate expressions and their adjacent guards."""
+    spans: list[tuple[int, int]] = []
+    search_from = 0
+    guard_term = r"(?:[A-Za-z_][A-Za-z0-9_]*|-?\d+)"
+    operator = r"(?:!=|<=|>=|=|<|>)"
+
+    while True:
+        match = re.search(r"#(?:count|sum)\{", text[search_from:])
+        if not match:
+            break
+        aggregate_start = search_from + match.start()
+        brace = text.find("{", aggregate_start)
+        aggregate_end = _matching_brace(text, brace)
+        if aggregate_end < 0:
+            break
+
+        start = aggregate_start
+        left_guard = re.search(
+            rf"(?P<term>{guard_term})\s*{operator}\s*$",
+            text[:aggregate_start],
+        )
+        if left_guard:
+            start = left_guard.start("term")
+
+        end = aggregate_end + 1
+        right_guard = re.match(
+            rf"\s*{operator}\s*{guard_term}",
+            text[end:],
+        )
+        if right_guard:
+            end += right_guard.end()
+
+        spans.append((start, end))
+        search_from = end
+    return spans
 
 
 def _strip_quoted(text: str) -> str:

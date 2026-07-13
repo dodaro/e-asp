@@ -1,0 +1,86 @@
+{
+  "name": "multiple_aggregate_comparison",
+  "description": "A rule with two assignment aggregates exposes both grounded counts, their comparison, and every contributing selected literal without duplicates.",
+  "program": "b(X) | c(X) :- a(X).\nmaggiori_b :- #count{X: b(X)} = V1, #count{X: c(X)} = V2, V1 > V2.\nmaggiori_c :- #count{X: b(X)} = V1, #count{X: c(X)} = V2, V1 < V2.\nuguali :- #count{X: b(X)} = V1, #count{X: c(X)} = V2, V1 = V2.\na(1..3).\n",
+  "debug_rules": true,
+  "debug_answer_set": true,
+  "answer_set_count": 1,
+  "answer_set_index": 0,
+  "expected_answer_sets": [
+    [
+      "a(1)",
+      "a(2)",
+      "a(3)",
+      "b(2)",
+      "c(1)",
+      "c(3)",
+      "maggiori_c"
+    ]
+  ],
+  "expected_atoms": [
+    {"atom": "b(2)", "value": "true"},
+    {"atom": "c(1)", "value": "true"},
+    {"atom": "c(3)", "value": "true"},
+    {"atom": "maggiori_c", "value": "true"}
+  ],
+  "explanations": [
+    {
+      "literal": "maggiori_c",
+      "expected_responses": [
+        {"type": "literal", "rule": "b(2)."},
+        {"type": "literal", "rule": "c(1)."},
+        {"type": "literal", "rule": "c(3)."},
+        {"type": "aggregate", "rule": "maggiori_c :- #count{X: b(X)} = V1, #count{X: c(X)} = V2, V1 < V2."},
+        {"type": "rule", "rule": "b(X) | c(X) :- a(X)."}
+      ]
+    }
+  ],
+  "aggregate_expansions": [
+    {
+      "literal": "maggiori_c",
+      "rule": "maggiori_c :- #count{X: b(X)} = V1, #count{X: c(X)} = V2, V1 < V2.",
+      "expected": {
+        "#count{X: b(X)} = 1": {
+          "<X=3>": ["b(3) is false"],
+          "<X=1>": ["b(1) is false"],
+          "<X=2>": ["b(2) is true"]
+        },
+        "#count{X: c(X)} = 2": {
+          "<X=2>": ["c(2) is false"],
+          "<X=3>": ["c(3) is true"],
+          "<X=1>": ["c(1) is true"]
+        },
+        "1 < 2": {},
+        "#count{X: b(X)} = 0": {
+          "<X=3>": ["b(3) is false"],
+          "<X=1>": ["b(1) is false"],
+          "<X=2>": ["b(2) is true"]
+        },
+        "#count{X: b(X)} = 2": {
+          "<X=3>": ["b(3) is false"],
+          "<X=1>": ["b(1) is false"],
+          "<X=2>": ["b(2) is true"]
+        },
+        "#count{X: c(X)} = 1": {
+          "<X=2>": ["c(2) is false"],
+          "<X=3>": ["c(3) is true"],
+          "<X=1>": ["c(1) is true"]
+        },
+        "#count{X: c(X)} = 3": {
+          "<X=2>": ["c(2) is false"],
+          "<X=3>": ["c(3) is true"],
+          "<X=1>": ["c(1) is true"]
+        }
+      },
+      "expected_truth": {
+        "#count{X: b(X)} = 1": "the aggregate is true, expand to see why",
+        "#count{X: c(X)} = 2": "the aggregate is true, expand to see why",
+        "1 < 2": "the comparison is true",
+        "#count{X: b(X)} = 0": "the aggregate is false, expand to see why",
+        "#count{X: b(X)} = 2": "the aggregate is false, expand to see why",
+        "#count{X: c(X)} = 1": "the aggregate is false, expand to see why",
+        "#count{X: c(X)} = 3": "the aggregate is false, expand to see why"
+      }
+    }
+  ]
+}
