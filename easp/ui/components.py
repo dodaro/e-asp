@@ -157,7 +157,9 @@ statement** (not on their own line, and not inside a `%` comment):
         with st.expander("Privacy and LLM usage"):
             st.markdown(
                 """
-E-ASP is free to use. 
+E-ASP is free and open-source research software. 
+It is provided "as is" and comes with no warranty or guarantee of correctness, completeness, or fitness for any particular purpose. 
+Users are responsible for independently verifying any results produced by the tool.
 The optional LLM explanation feature sends the explanation context to an external third-party service. 
 Do not use this feature with sensitive or confidential data. 
 Service availability and usage limits may apply.
