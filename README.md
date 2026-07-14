@@ -136,7 +136,7 @@ since they run the real solver.
 E-ASP was originally developed in Java/JavaFX
 ([original repository](https://github.com/MarcoMochi/E-ASP)). This
 project is a full Python port of that tool; portions are derived from
-the original code base, Copyright (c) 2024 Marco Mochi, released under
+the original code base, Copyright © 2024 Marco Mochi, released under
 the MIT License (see `LICENSE`).
 
 ## Project structure
