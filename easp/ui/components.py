@@ -466,7 +466,7 @@ def render_response_groups(responses: list[Response], *, allow_literal_explain: 
     facts = [response for response in responses if response.type == FACT_TYPE]
     literals = [response for response in responses if response.type == LITERAL_TYPE]
 
-    rules_column, details_column = st.columns([0.65, 0.35], gap="large")
+    rules_column, details_column = st.columns([0.55, 0.45], gap="small")
     with rules_column:
         __render_rules_and_literals(rules, literals, facts, allow_literal_explain)
     with details_column:
