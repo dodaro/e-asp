@@ -573,8 +573,13 @@ def render_llm_explanation_panel() -> None:
     if st.session_state.llm_explanation:
         with st.container(border=True):
             st.markdown(st.session_state.llm_explanation)
+
+        st.caption(
+            "LLMs can generate incorrect, incomplete, or fabricated information (\"hallucinations\"). "
+            "The explanations they produce are intended for convenience only and do not constitute a guarantee of correctness. "
+            "Users are responsible for verifying the accuracy of any LLM-generated content before relying on it.")
     else:
-        st.caption("Generate a natural-language explanation of the result.")
+        st.caption("Generate a natural-language explanation of the result. ")
 
     if st.session_state.llm_prompt:
         with st.expander("Advanced: LLM prompt"):
