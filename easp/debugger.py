@@ -683,7 +683,11 @@ class Debugger:
         minimal_core = self._minimal_core(extended_program)
         self._add_debug_rules_to_core(unsat_core, minimal_core, atom=atom)
         if atom is not None and self.debug_answer_set:
-            self._add_aggregate_literals_to_core(unsat_core)
+            aggregate_literals = self._add_aggregate_literals_to_core(unsat_core)
+            self._remove_rules_defining_selected_aggregate_literals(
+                unsat_core,
+                aggregate_literals,
+            )
         if expand_constraints and self.debug_rules:
             self._add_defining_rules_for_core_constraints(unsat_core, extended_program)
         return unsat_core
@@ -792,15 +796,19 @@ class Debugger:
                     else:
                         unsat_core.add_rule("not " + display, 2)
 
-    def _add_aggregate_literals_to_core(self, unsat_core: UnsatisfiableCore) -> None:
+    def _add_aggregate_literals_to_core(
+        self,
+        unsat_core: UnsatisfiableCore,
+    ) -> set[str]:
         """Include true derived literals used by aggregate explanations.
 
         A minimal core may select only one side of a disjunctive derivation,
-        even when another derived atom contributes to a count.  Expanding the
+        even when another derived atom contributes to a count. Expanding the
         aggregate reveals that contribution, so surface it in Selected
-        Literals as well and rely on the core's uniqueness guarantee to avoid
-        duplicates.
+        Literals as well; the subsequent pruning pass removes derivation rules
+        that this promotion makes redundant at the current explanation level.
         """
+        selected_literals: set[str] = set()
         for response in list(unsat_core.rules):
             if response.type != 3:
                 continue
@@ -818,7 +826,38 @@ class Debugger:
                         for literal in asp_parser.split_top_level(condition):
                             literal = literal.strip()
                             if literal in self.derived_atoms:
+                                selected_literals.add(literal)
                                 self._add_unique_response(unsat_core, literal + ".", 2)
+        return selected_literals
+
+    def _remove_rules_defining_selected_aggregate_literals(
+        self,
+        unsat_core: UnsatisfiableCore,
+        selected_literals: set[str],
+    ) -> None:
+        """Remove derivation rules made redundant by aggregate literals.
+
+        Aggregate expansion promotes its actual contributing atoms to
+        Selected Literals.  They are therefore premises at the current level
+        of the explanation; keeping a rule whose only displayed role is to
+        derive one of those same literals produces an inconsistent hybrid
+        explanation.  Rules that can derive the atom currently under analysis
+        remain visible because they may be an independent direct reason.
+        """
+        if not selected_literals:
+            return
+
+        analyzed_atom = self.analyzed.atom if self.analyzed is not None else ""
+        unsat_core.rules = [
+            response
+            for response in unsat_core.rules
+            if response.type != 0
+            or (analyzed_atom and self._rule_defines_literal(response.rule, analyzed_atom))
+            or not any(
+                self._rule_defines_literal(response.rule, literal)
+                for literal in selected_literals
+            )
+        ]
 
     def _add_defining_rules_for_core_constraints(
         self,
@@ -874,22 +913,9 @@ class Debugger:
         for line in program.splitlines():
             if line.startswith("{__debug") or "__support" in line:
                 continue
-            # Collect the head atoms of the line (plain head, disjunction or
-            # choice with several elements).
-            if ":-" in line and line.split(":-", 1)[0]:
-                head_part = line.split(":-", 1)[0]
-                if "|" in head_part:
-                    candidates = head_part.split("|")
-                elif "{" in head_part:
-                    candidates = head_part.split(";")
-                else:
-                    candidates = [head_part]
-            elif "|" in line:
-                candidates = line.split("|")
-            elif "{" in line:
-                candidates = line.split(";")
-            else:
-                candidates = []
+            # Inspect only the syntactic head. In particular, braces in a
+            # body aggregate must never be mistaken for a choice-rule head.
+            candidates = self._rule_head_candidates(line)
 
             for candidate in candidates:
                 head_text = candidate.split(":", 1)[0]
@@ -907,6 +933,62 @@ class Debugger:
                 ):
                     self._append_debug_source(line, rules)
         return rules
+
+    @staticmethod
+    def _rule_head_candidates(rule: str) -> list[str]:
+        """Return the literals occurring in a normal/disjunctive/choice head."""
+        text = rule.strip()
+        if not text:
+            return []
+
+        if ":-" in text:
+            head = text.split(":-", 1)[0].strip()
+        else:
+            head = text.removesuffix(".").strip()
+        if not head:
+            return []  # constraint
+
+        if "|" in head:
+            return asp_parser.split_top_level(head, separator="|")
+
+        brace = head.find("{")
+        if brace >= 0:
+            end = asp_parser._matching_brace(head, brace)
+            if end < 0:
+                return []
+            return asp_parser.split_top_level(head[brace + 1 : end], separator=";")
+
+        return [head]
+
+    def _rule_defines_literal(self, rule: str, literal: str) -> bool:
+        """Whether ``literal`` can be produced by the head of ``rule``."""
+        target = self._restore_quotes(literal).strip().removesuffix(".")
+        target_head = target.split("(", 1)[0].strip()
+        target_arity = self.get_arity(
+            target.split("(", 1)[1] if "(" in target else target
+        )
+
+        for candidate in self._rule_head_candidates(self._restore_quotes(rule)):
+            head_text = (
+                candidate.split(":", 1)[0]
+                .replace("{", "")
+                .replace("}", "")
+                .strip()
+            )
+            candidate_head = head_text.split("(", 1)[0].strip()
+            candidate_arity = self.get_arity(
+                head_text.split("(", 1)[1] if "(" in head_text else head_text
+            )
+            if (
+                target_head == candidate_head
+                and target_arity == candidate_arity
+                and self._head_instance_match(
+                    self._atom_args(target),
+                    self._atom_args(head_text),
+                )
+            ):
+                return True
+        return False
 
     @staticmethod
     def _atom_args(text: str) -> list[str]:

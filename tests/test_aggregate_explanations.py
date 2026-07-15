@@ -313,3 +313,23 @@ class NegatedAggregateTests(TestCase):
             ),
             "enabled",
         )
+
+
+class RuleHeadParsingTests(TestCase):
+    def test_body_aggregate_elements_are_not_rule_head_candidates(self) -> None:
+        self.assertEqual(
+            Debugger._rule_head_candidates(
+                ":- not a4, #count{a1:a1;a2:a2;a3:a3} >= 2."
+            ),
+            [],
+        )
+
+    def test_disjunction_and_choice_heads_are_still_recognized(self) -> None:
+        self.assertEqual(
+            Debugger._rule_head_candidates("a1 | a2 :- enabled."),
+            ["a1", "a2"],
+        )
+        self.assertEqual(
+            Debugger._rule_head_candidates("{a1;a2} :- enabled."),
+            ["a1", "a2"],
+        )

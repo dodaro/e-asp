@@ -131,9 +131,13 @@ def assert_literal_explanations(test: TestCase, case: DebuggerCase) -> None:
     for explanation in explanations:
         literal = str(explanation["literal"])
         query_atom = _find_query_atom(justifier, atoms, literal)
+        chain = [
+            _find_query_atom(justifier, atoms, str(chain_literal))
+            for chain_literal in explanation.get("chain", [])
+        ]
         responses = ExplainAtomService(
             justifier,
-            [],
+            chain,
             query_atom,
             bool(explanation.get("check_opt", False)),
         ).run()

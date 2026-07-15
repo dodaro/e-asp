@@ -1,0 +1,46 @@
+{
+  "name": "aggregate_chain_regression",
+  "description": "Aggregate contributors are premises at the current explanation level, and a body aggregate is never mistaken for a rule head while following the explanation chain.",
+  "program": "a1 | a2.\na2 | a3.\na4 | a5.\n:- not a4, #count{a1:a1;a2:a2;a3:a3}>=2.\n",
+  "debug_rules": true,
+  "debug_answer_set": true,
+  "answer_set_count": 0,
+  "answer_set_index": 0,
+  "expected_answer_sets": [
+    ["a1", "a3", "a4"],
+    ["a2", "a5"],
+    ["a2", "a4"]
+  ],
+  "expected_atoms": [
+    {"atom": "a1", "value": "true"},
+    {"atom": "a3", "value": "true"},
+    {"atom": "a4", "value": "true"},
+    {"atom": "a2", "value": "false"}
+  ],
+  "explanations": [
+    {
+      "literal": "a4",
+      "expected_responses": [
+        {"type": "literal", "rule": "a1."},
+        {"type": "literal", "rule": "a3."},
+        {"type": "aggregate", "rule": ":- not a4, #count{a1:a1;a2:a2;a3:a3}>=2."}
+      ]
+    },
+    {
+      "literal": "a1",
+      "chain": ["a4"],
+      "expected_responses": [
+        {"type": "literal", "rule": "not a2."},
+        {"type": "rule", "rule": "a1 | a2."}
+      ]
+    },
+    {
+      "literal": "not a2",
+      "chain": ["a4", "a1"],
+      "expected_responses": [
+        {"type": "literal", "rule": "a3."},
+        {"type": "rule", "rule": "a2 | a3."}
+      ]
+    }
+  ]
+}

@@ -30,8 +30,7 @@
         {"type": "literal", "rule": "b(2)."},
         {"type": "literal", "rule": "c(1)."},
         {"type": "literal", "rule": "c(3)."},
-        {"type": "aggregate", "rule": "maggiori_c :- #count{X: b(X)} = V1, #count{X: c(X)} = V2, V1 < V2."},
-        {"type": "rule", "rule": "b(X) | c(X) :- a(X)."}
+        {"type": "aggregate", "rule": "maggiori_c :- #count{X: b(X)} = V1, #count{X: c(X)} = V2, V1 < V2."}
       ]
     }
   ],

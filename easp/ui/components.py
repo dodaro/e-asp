@@ -461,6 +461,7 @@ def __render_rules_and_literals(rules: list, literals: list, facts: list, allow_
 def render_response_groups(responses: list[Response], *, allow_literal_explain: bool) -> None:
     if allow_literal_explain and not responses:
         st.info(FREE_CHOICE_EXPLANATION)
+        return
 
     rules = [response for response in responses if response.type in {RULE_TYPE, AGGREGATE_TYPE}]
     facts = [response for response in responses if response.type == FACT_TYPE]
