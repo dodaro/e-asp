@@ -70,6 +70,8 @@ class Debugger:
         self.grounded: list[str] = []
         #: Atom currently being explained.
         self.analyzed: QueryAtom | None = None
+        #: Atoms already present in the interactive explanation chain.
+        self.explanation_chain_atoms: set[str] = set()
         self.debug_rules = debug_rules
         self.debug_answer_set = debug_answer_set
         self.optimization_problem = False
@@ -231,6 +233,7 @@ class Debugger:
     ) -> UnsatisfiableCore:
         """Explain why ``atom`` has its truth value in the answer set."""
         self.analyzed = atom
+        self.explanation_chain_atoms = {item.atom for item in chain}
         program = self.add_derived(program, atom, chain, queries)
         program = self.set_rules_for_order(program, atom)
         extended_program = self.extend_program(program, atom, "", check_opt)
@@ -827,7 +830,12 @@ class Debugger:
                             literal = literal.strip()
                             if literal in self.derived_atoms:
                                 selected_literals.add(literal)
-                                self._add_unique_response(unsat_core, literal + ".", 2)
+                                if literal not in self.explanation_chain_atoms:
+                                    self._add_unique_response(
+                                        unsat_core,
+                                        literal + ".",
+                                        2,
+                                    )
         return selected_literals
 
     def _remove_rules_defining_selected_aggregate_literals(
@@ -1651,11 +1659,6 @@ class Debugger:
     def _condition_contains_analyzed_literal(self, condition: str) -> bool:
         if self.analyzed is None:
             return False
-        target = (
-            self.analyzed.atom
-            if self.analyzed.value == QueryAtom.TRUE
-            else "not " + self.analyzed.atom
-        )
         literals = [
             literal.strip()
             for literal in asp_parser.split_top_level(condition)
@@ -1665,7 +1668,10 @@ class Debugger:
         # conjunction is conceptually mapped to a fresh element atom, so an
         # analyzed literal occurring inside that conjunction is not itself an
         # element of S.
-        return len(literals) == 1 and literals[0] == target
+        if len(literals) != 1:
+            return False
+        aggregate_literal = literals[0].removeprefix("not ").strip()
+        return aggregate_literal == self.analyzed.atom
 
     def set_false_true(self, values: dict[str, dict[str, list[str]]]) -> None:
         """Annotate every aggregate element with its truth value in the

@@ -1,0 +1,54 @@
+{
+  "name": "aggregate_false_chain_regression",
+  "description": "When a false analyzed atom occurs positively in a count, the expansion treats it as internal, excludes it, and shows the already-explained true element that puts the count at its bound.",
+  "program": "a1 | a2.\na2 | a3.\na4 | a5.\n:- not a4, #count{a1:a1;a2:a2;a3:a3}>=2.\n",
+  "debug_rules": true,
+  "debug_answer_set": true,
+  "answer_set_count": 0,
+  "answer_set_index": 1,
+  "expected_answer_sets": [
+    ["a1", "a3", "a4"],
+    ["a2", "a5"],
+    ["a2", "a4"]
+  ],
+  "expected_atoms": [
+    {"atom": "a2", "value": "true"},
+    {"atom": "a5", "value": "true"},
+    {"atom": "a1", "value": "false"},
+    {"atom": "a3", "value": "false"},
+    {"atom": "a4", "value": "false"}
+  ],
+  "explanations": [
+    {
+      "literal": "a2",
+      "expected_responses": [
+        {"type": "literal", "rule": "not a1."},
+        {"type": "rule", "rule": "a1 | a2."}
+      ]
+    },
+    {
+      "literal": "not a1",
+      "chain": ["a2"],
+      "expected_responses": [
+        {"type": "literal", "rule": "a5."},
+        {"type": "rule", "rule": "a4 | a5."},
+        {"type": "aggregate", "rule": ":- not a4, #count{a1:a1;a2:a2;a3:a3}>=2."}
+      ]
+    }
+  ],
+  "aggregate_expansions": [
+    {
+      "literal": "not a1",
+      "chain": ["a2"],
+      "rule": ":- not a4, #count{a1:a1;a2:a2;a3:a3}>=2.",
+      "expected": {
+        "not a4, #count{a1:a1;a2:a2;a3:a3}>=2": {
+          "a2": ["a2 is true"]
+        }
+      },
+      "expected_truth": {
+        "not a4, #count{a1:a1;a2:a2;a3:a3}>=2": "the aggregate condition is false and contributes to the result; expand to see how"
+      }
+    }
+  ]
+}

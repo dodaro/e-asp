@@ -188,7 +188,16 @@ def assert_aggregate_expansions(test: TestCase, case: DebuggerCase) -> None:
         literal = expected_expansion.get("literal")
         if literal:
             query_atom = _find_query_atom(justifier, atoms, str(literal))
-            ExplainAtomService(justifier, [], query_atom, bool(expected_expansion.get("check_opt", False))).run()
+            chain = [
+                _find_query_atom(justifier, atoms, str(chain_literal))
+                for chain_literal in expected_expansion.get("chain", [])
+            ]
+            ExplainAtomService(
+                justifier,
+                chain,
+                query_atom,
+                bool(expected_expansion.get("check_opt", False)),
+            ).run()
 
         rule = str(expected_expansion["rule"])
         expanded = justifier.expand_aggregate(rule)
