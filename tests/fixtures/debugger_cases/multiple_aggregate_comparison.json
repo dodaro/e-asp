@@ -1,6 +1,6 @@
 {
   "name": "multiple_aggregate_comparison",
-  "description": "A rule with two assignment aggregates exposes both grounded counts, their comparison, and every contributing selected literal without duplicates.",
+  "description": "A rule with two assignment aggregates exposes both grounded counts and their comparison; aggregate contributors are promoted to Selected Literals only when the corresponding instrumentation atoms form a verified irreducible core.",
   "program": "b(X) | c(X) :- a(X).\nmaggiori_b :- #count{X: b(X)} = V1, #count{X: c(X)} = V2, V1 > V2.\nmaggiori_c :- #count{X: b(X)} = V1, #count{X: c(X)} = V2, V1 < V2.\nuguali :- #count{X: b(X)} = V1, #count{X: c(X)} = V2, V1 = V2.\na(1..3).\n",
   "debug_rules": true,
   "debug_answer_set": true,
@@ -27,9 +27,9 @@
     {
       "literal": "maggiori_c",
       "expected_responses": [
-        {"type": "literal", "rule": "b(2)."},
         {"type": "literal", "rule": "c(1)."},
         {"type": "literal", "rule": "c(3)."},
+        {"type": "rule", "rule": "b(X) | c(X) :- a(X)."},
         {"type": "aggregate", "rule": "maggiori_c :- #count{X: b(X)} = V1, #count{X: c(X)} = V2, V1 < V2."}
       ]
     }

@@ -684,13 +684,18 @@ class Debugger:
             return unsat_core
 
         minimal_core = self._minimal_core(extended_program)
-        self._add_debug_rules_to_core(unsat_core, minimal_core, atom=atom)
         if atom is not None and self.debug_answer_set:
-            aggregate_literals = self._add_aggregate_literals_to_core(unsat_core)
-            self._remove_rules_defining_selected_aggregate_literals(
-                unsat_core,
-                aggregate_literals,
+            minimal_core = self._prefer_validated_support_literals(
+                extended_program,
+                minimal_core,
+                atom,
             )
+            minimal_core = self._prefer_validated_aggregate_literals(
+                extended_program,
+                minimal_core,
+                atom,
+            )
+        self._add_debug_rules_to_core(unsat_core, minimal_core, atom=atom)
         if expand_constraints and self.debug_rules:
             self._add_defining_rules_for_core_constraints(unsat_core, extended_program)
         return unsat_core
@@ -729,6 +734,191 @@ class Debugger:
             if not self.runner.is_incoherent(tmp, "--outf=1", "--keep-facts"):
                 minimal_core.append(candidate)
         return minimal_core
+
+    def _prefer_validated_support_literals(
+        self,
+        extended_program: str,
+        minimal_core: list[str],
+        atom: QueryAtom,
+    ) -> list[str]:
+        """Replace a support-control atom with its explicit type-2 literal
+        only when that alternative is itself an irreducible core."""
+        current_core = list(minimal_core)
+        for support in list(current_core):
+            match = re.fullmatch(
+                r'__support\((".*"),[^,]*,([^,()]*)\)',
+                support,
+            )
+            if not match:
+                continue
+
+            raw_constraint = match.group(1).replace('"', "").replace("\\", "")
+            supported_atom = (
+                self._restore_quotes(raw_constraint)
+                .removeprefix(":-")
+                .strip()
+                .removeprefix("not ")
+                .removesuffix(".")
+                .strip()
+            )
+            if supported_atom == atom.atom:
+                continue
+
+            line_number = match.group(2).strip()
+            literal_debug = next(
+                (
+                    candidate
+                    for candidate in self.debug_atoms
+                    if re.fullmatch(
+                        rf'__debug\((".*"),2,{re.escape(line_number)}\)',
+                        candidate,
+                    )
+                ),
+                None,
+            )
+            if literal_debug is None or literal_debug in current_core:
+                continue
+
+            candidate_core = [
+                literal_debug if item == support else item
+                for item in current_core
+            ]
+            if self._is_irreducible_core(extended_program, candidate_core):
+                current_core = candidate_core
+
+        return current_core
+
+    def _prefer_validated_aggregate_literals(
+        self,
+        extended_program: str,
+        minimal_core: list[str],
+        atom: QueryAtom,
+    ) -> list[str]:
+        """Replace derivation rules with aggregate-contributor literals only
+        when the resulting instrumentation atoms still form an irreducible
+        incoherent core.
+
+        This preserves the UI preference for literal-based explanations
+        without presenting a set that merely *looks* plausible after
+        post-processing.  Every accepted replacement is checked against the
+        same extended ASP program used by the original core computation.
+        """
+        probe = UnsatisfiableCore()
+        self._add_debug_rules_to_core(probe, minimal_core, atom=atom)
+        contributors = self._aggregate_contributor_literals(probe)
+        current_core = list(minimal_core)
+
+        for literal in contributors:
+            if literal in self.explanation_chain_atoms:
+                continue
+            literal_debug = self._literal_debug_atom(literal)
+            if literal_debug is None or literal_debug in current_core:
+                continue
+
+            rules_to_replace = [
+                symbol
+                for symbol in current_core
+                if self._core_rule_defines_literal(
+                    symbol,
+                    literal,
+                    analyzed_atom=atom.atom,
+                )
+            ]
+            if not rules_to_replace:
+                continue
+
+            candidate_core = [
+                symbol
+                for symbol in current_core
+                if symbol not in rules_to_replace
+            ]
+            candidate_core.append(literal_debug)
+            if self._is_irreducible_core(extended_program, candidate_core):
+                current_core = candidate_core
+
+        return current_core
+
+    def _aggregate_contributor_literals(
+        self,
+        core: UnsatisfiableCore,
+    ) -> list[str]:
+        """True derived literals selected by the causal aggregate expansion."""
+        contributors: list[str] = []
+        for response in core.rules:
+            if response.type != 3:
+                continue
+            try:
+                expanded = self.generate_set(response.rule)
+            except Exception:
+                continue
+            for groups in expanded.values():
+                for annotations in groups.values():
+                    for annotation in annotations:
+                        match = re.match(r"^(.*?)\s+is true\s*$", annotation)
+                        if not match:
+                            continue
+                        condition = match.group(1).strip()
+                        for literal in asp_parser.split_top_level(condition):
+                            literal = literal.strip()
+                            if (
+                                literal in self.derived_atoms
+                                and literal not in contributors
+                            ):
+                                contributors.append(literal)
+        return contributors
+
+    def _literal_debug_atom(self, literal: str) -> str | None:
+        """Instrumentation atom that freezes ``literal`` to its AS value."""
+        target = self._restore_quotes(literal).strip().removesuffix(".")
+        for symbol in self.debug_atoms:
+            match = re.fullmatch(r'__debug\((".*"),2,[^,()]*\)', symbol)
+            if not match:
+                continue
+            considered = self._restore_quotes(
+                match.group(1).replace('"', "").replace("\\", "")
+            ).removesuffix(".")
+            if considered == target:
+                return symbol
+        return None
+
+    def _core_rule_defines_literal(
+        self,
+        symbol: str,
+        literal: str,
+        *,
+        analyzed_atom: str,
+    ) -> bool:
+        """Whether a type-0 core symbol is replaceable by ``literal``."""
+        match = re.fullmatch(r'__debug\((".*"),0,[^,()]*\)', symbol)
+        if not match:
+            return False
+        rule = self._restore_quotes(
+            match.group(1).replace('"', "").replace("\\", "")
+        )
+        return (
+            not self._rule_defines_literal(rule, analyzed_atom)
+            and self._rule_defines_literal(rule, literal)
+        )
+
+    def _is_irreducible_core(
+        self,
+        extended_program: str,
+        candidate_core: list[str],
+    ) -> bool:
+        """Check incoherence and necessity of every candidate core element."""
+        if self.check_coherence(extended_program, candidate_core):
+            return False
+        return all(
+            self.check_coherence(
+                extended_program,
+                [
+                    item
+                    for index, item in enumerate(candidate_core)
+                    if index != removed_index
+                ],
+            )
+            for removed_index in range(len(candidate_core))
+        )
 
     def _add_debug_rules_to_core(
         self,
@@ -783,89 +973,6 @@ class Debugger:
                         unsat_core.add_rule(head, 1)
                     else:
                         unsat_core.add_rule(head, 0)
-
-            if atom is not None and self.debug_answer_set:
-                # The support text is ":- [not] p." -- extract the atom and
-                # report it with the polarity it has in the answer set.
-                raw = match.group(1).replace('"', "").removeprefix(":-").strip()
-                display = raw.removeprefix("not ").strip()  # e.g. "c."
-                bare = self._restore_quotes(display).removesuffix(".").strip()
-                if bare in self.unsupported:
-                    unsat_core.add_rule("not " + display, 2)
-                    continue
-                if bare != atom.atom:
-                    if bare in self.derived_atoms:
-                        unsat_core.add_rule(display, 2)
-                    else:
-                        unsat_core.add_rule("not " + display, 2)
-
-    def _add_aggregate_literals_to_core(
-        self,
-        unsat_core: UnsatisfiableCore,
-    ) -> set[str]:
-        """Include true derived literals used by aggregate explanations.
-
-        A minimal core may select only one side of a disjunctive derivation,
-        even when another derived atom contributes to a count. Expanding the
-        aggregate reveals that contribution, so surface it in Selected
-        Literals as well; the subsequent pruning pass removes derivation rules
-        that this promotion makes redundant at the current explanation level.
-        """
-        selected_literals: set[str] = set()
-        for response in list(unsat_core.rules):
-            if response.type != 3:
-                continue
-            try:
-                expanded = self.generate_set(response.rule)
-            except Exception:
-                continue
-            for groups in expanded.values():
-                for annotations in groups.values():
-                    for annotation in annotations:
-                        match = re.match(r"^(.*?)\s+is true\s*$", annotation)
-                        if not match:
-                            continue
-                        condition = match.group(1).strip()
-                        for literal in asp_parser.split_top_level(condition):
-                            literal = literal.strip()
-                            if literal in self.derived_atoms:
-                                selected_literals.add(literal)
-                                if literal not in self.explanation_chain_atoms:
-                                    self._add_unique_response(
-                                        unsat_core,
-                                        literal + ".",
-                                        2,
-                                    )
-        return selected_literals
-
-    def _remove_rules_defining_selected_aggregate_literals(
-        self,
-        unsat_core: UnsatisfiableCore,
-        selected_literals: set[str],
-    ) -> None:
-        """Remove derivation rules made redundant by aggregate literals.
-
-        Aggregate expansion promotes its actual contributing atoms to
-        Selected Literals.  They are therefore premises at the current level
-        of the explanation; keeping a rule whose only displayed role is to
-        derive one of those same literals produces an inconsistent hybrid
-        explanation.  Rules that can derive the atom currently under analysis
-        remain visible because they may be an independent direct reason.
-        """
-        if not selected_literals:
-            return
-
-        analyzed_atom = self.analyzed.atom if self.analyzed is not None else ""
-        unsat_core.rules = [
-            response
-            for response in unsat_core.rules
-            if response.type != 0
-            or (analyzed_atom and self._rule_defines_literal(response.rule, analyzed_atom))
-            or not any(
-                self._rule_defines_literal(response.rule, literal)
-                for literal in selected_literals
-            )
-        ]
 
     def _add_defining_rules_for_core_constraints(
         self,
