@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from openai import OpenAI
 
-from easp.models import FREE_CHOICE_EXPLANATION, Response
+from easp.models import CostLevel, FREE_CHOICE_EXPLANATION, Response, WeakConstraint
 
 
 class LlmExplanationError(RuntimeError):
@@ -34,6 +34,9 @@ class ExplanationContext:
     chain: list[str]
     responses: list[Response]
     aggregate_details: list[AggregateDetail] = field(default_factory=list)
+    #: Only set on the optimality-explanation page.
+    cost_level: CostLevel | None = None
+    weak_constraints: list[WeakConstraint] = field(default_factory=list)
 
 
 class OpenRouterClient:
@@ -94,6 +97,7 @@ def build_discursive_prompt(context: ExplanationContext, language: str, technica
             free_choice=context.page == "explanation",
         ),
         _aggregate_details_section(context.aggregate_details),
+        _weak_constraints_section(context.cost_level, context.weak_constraints),
         "",
         f"{additional_instruction}",
         "",
@@ -168,6 +172,28 @@ def _aggregate_details_section(details: list[AggregateDetail]) -> str:
             visible_atoms = [atom for atom in atoms if atom]
             atom_text = ", ".join(visible_atoms) if visible_atoms else "no atoms"
             lines.append(f"   - {label}: {atom_text}")
+    return "\n".join(lines)
+
+
+def _weak_constraints_section(
+    cost_level: CostLevel | None,
+    weak_constraints: list[WeakConstraint],
+) -> str:
+    if cost_level is None or not weak_constraints:
+        return ""
+
+    violated = [constraint for constraint in weak_constraints if constraint.violated]
+    lines = [
+        f"Weak constraints at optimization level {cost_level.level} "
+        f"(total cost {cost_level.cost}, {len(violated)} of {len(weak_constraints)} violated):"
+    ]
+    for constraint in weak_constraints:
+        state = "violated" if constraint.violated else "not violated"
+        lines.append(f"- {constraint.rule} -> {state}, cost {constraint.cost}")
+        for instance in constraint.instances:
+            terms = _clean_piece(instance.terms)
+            label = "no terms" if terms in {"", "empty"} else terms
+            lines.append(f"  - instance {label}: cost {instance.weight}")
     return "\n".join(lines)
 
 

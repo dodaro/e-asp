@@ -20,6 +20,7 @@ from easp.services import (
     ExplainCostService,
     Justifier,
     RetrieveAtomsService,
+    WeakConstraintsService,
     partition_aggregate_values,
 )
 from easp.ui.state import (
@@ -118,6 +119,10 @@ def explain_optimality(level: CostLevel) -> None:
         clear_llm_explanation()
         justifier = _require_justifier()
         st.session_state.responses = ExplainCostService(justifier, level, True).run()
+        # Computed once here (not while rendering): the summary needs a solver
+        # call and the page is re-rendered at every widget interaction.
+        st.session_state.cost_level = level
+        st.session_state.weak_constraints = WeakConstraintsService(justifier, level).run()
         navigate(PAGE_COST_EXPLANATION)
         st.rerun()
     except Exception as exc:
@@ -193,6 +198,7 @@ def _openrouter_api_key() -> str:
 
 
 def _llm_context() -> ExplanationContext:
+    on_cost_page = current_page() == PAGE_COST_EXPLANATION
     return ExplanationContext(
         program=st.session_state.program,
         page=current_page(),
@@ -201,6 +207,8 @@ def _llm_context() -> ExplanationContext:
         chain=[str(atom) for atom in st.session_state.chain],
         responses=list(st.session_state.responses),
         aggregate_details=_aggregate_details_for_prompt(),
+        cost_level=st.session_state.cost_level if on_cost_page else None,
+        weak_constraints=list(st.session_state.weak_constraints) if on_cost_page else [],
     )
 
 

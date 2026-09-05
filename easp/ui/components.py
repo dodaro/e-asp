@@ -1,11 +1,18 @@
 from __future__ import annotations
 
+from collections.abc import Callable
 from html import escape
 from typing import Iterable
 
 import streamlit as st
 
-from easp.models import FREE_CHOICE_EXPLANATION, QueryAtom, Response
+from easp.models import (
+    FREE_CHOICE_EXPLANATION,
+    CostLevel,
+    QueryAtom,
+    Response,
+    WeakConstraint,
+)
 from easp.services import Justifier, partition_aggregate_values
 from easp.ui import actions
 from easp.ui.state import (
@@ -104,18 +111,19 @@ def render_editor() -> None:
         st.divider()
         st.subheader("Instructions")
 
-        with st.expander("Rule annotations: @ignore and @correct"):
+        with st.expander("Rule annotations: @ignore and @comment"):
             st.markdown(
                 """
 Annotations are written **after the final dot of a rule, on the same
 statement** (not on their own line, and not inside a `%` comment):
 
-- `@ignore` — the rule is excluded entirely, from both solving and
+- `@ignore` — the rule stays active and contributes to the answer sets,
+  but it is ignored by the debugger: it can never be blamed in an
+  explanation, so the blame flows through it to its premises. Use it on
+  rules you know are right to focus the debugger on the rest of the
+  program.
+- `@comment` — the rule is excluded entirely, from both solving and
   debugging: like commenting it out, but stating the intention.
-- `@correct` — the rule stays active and contributes to the answer sets,
-  but it is *trusted*: it can never be blamed in an explanation, so the
-  blame flows through it to its premises. Use it on rules you know are
-  right to focus the debugger on the rest of the program.
                 """
             )
             st.code(
@@ -123,10 +131,10 @@ statement** (not on their own line, and not inside a `%` comment):
                 "assigned(P,D) : day(D) :- patient(P).\n"
                 "\n"
                 "% I know this rule is right: never blame it\n"
-                "busy(D) :- assigned(P,D). @correct\n"
+                "busy(D) :- assigned(P,D). @ignore\n"
                 "\n"
                 "% temporarily out of the picture (solving included)\n"
-                ":- busy(D), holiday(D). @ignore\n",
+                ":- busy(D), holiday(D). @comment\n",
                 language="prolog",
             )
 
@@ -419,7 +427,75 @@ def render_explanation() -> None:
 def render_cost_explanation() -> None:
     _render_title("Optimality Explanation")
     _render_navigation(back=True, home=True)
-    render_response_groups(st.session_state.responses, allow_literal_explain=False)
+    render_response_groups(
+        st.session_state.responses,
+        allow_literal_explain=False,
+        extra_renderer=_render_weak_constraint_summary,
+    )
+
+
+def _render_weak_constraint_summary() -> None:
+    """Recap of the weak constraints that can pay a cost at the inspected
+    level: which ones the answer set violates, which ones it does not, and
+    what each of them costs."""
+    level: CostLevel | None = st.session_state.cost_level
+    constraints: list[WeakConstraint] = st.session_state.weak_constraints
+    if level is None or not constraints:
+        return
+
+    violated = [constraint for constraint in constraints if constraint.violated]
+    satisfied = [constraint for constraint in constraints if not constraint.violated]
+
+    with st.container(border=True):
+        st.html(f"<h2>Weak Constraints at Level {escape(level.level)} ({len(constraints)})</h2>")
+        st.caption(
+            f"Total cost {level.cost} at this level: {len(violated)} violated, "
+            f"{len(satisfied)} not violated."
+        )
+
+        if violated:
+            st.markdown(f"**Violated ({len(violated)})**")
+            for constraint in violated:
+                _render_weak_constraint(constraint)
+        if satisfied:
+            if violated:
+                st.divider()
+            st.markdown(f"**Not violated ({len(satisfied)})**")
+            for constraint in satisfied:
+                _render_weak_constraint(constraint)
+
+
+def _render_weak_constraint(constraint: WeakConstraint) -> None:
+    rule_column, cost_column = st.columns(
+        [0.74, 0.26], gap="small", vertical_alignment="center"
+    )
+    with rule_column:
+        st.code(constraint.rule, language="prolog", wrap_lines=True)
+    with cost_column:
+        badge = ":red-badge[Violated]" if constraint.violated else ":green-badge[Not violated]"
+        st.markdown(f"{badge}  \n**Cost: {constraint.cost}**")
+
+    if not constraint.instances:
+        return
+    with st.expander(f"Violated instances ({len(constraint.instances)})"):
+        st.caption(
+            "Ground instances whose body holds in the selected answer set, "
+            "with the cost each of them pays."
+        )
+        for instance in constraint.instances:
+            label = escape(_weak_instance_label(instance.terms))
+            st.markdown(
+                f'<div class="easp-atom-row"><strong>{label}:</strong> '
+                f"cost {instance.weight}</div>",
+                unsafe_allow_html=True,
+            )
+
+
+def _weak_instance_label(terms: str) -> str:
+    """Discriminant terms of one instance; ``empty`` is the placeholder used
+    when the weak constraint declares no terms after the level."""
+    cleaned = _clean_piece(terms)
+    return "(no terms)" if cleaned in {"", "empty"} else cleaned
 
 
 def render_unsat() -> None:
@@ -458,7 +534,14 @@ def __render_rules_and_literals(rules: list, literals: list, facts: list, allow_
                 ):
                     actions.explain_next_literal(selected.rule)
 
-def render_response_groups(responses: list[Response], *, allow_literal_explain: bool) -> None:
+def render_response_groups(
+    responses: list[Response],
+    *,
+    allow_literal_explain: bool,
+    extra_renderer: Callable[[], None] | None = None,
+) -> None:
+    """Render an explanation. ``extra_renderer`` draws a page-specific block
+    above the rules, in the same column."""
     if allow_literal_explain and not responses:
         st.info(FREE_CHOICE_EXPLANATION)
         return
@@ -469,6 +552,8 @@ def render_response_groups(responses: list[Response], *, allow_literal_explain: 
 
     rules_column, details_column = st.columns([0.55, 0.45], gap="small")
     with rules_column:
+        if extra_renderer is not None:
+            extra_renderer()
         __render_rules_and_literals(rules, literals, facts, allow_literal_explain)
     with details_column:
         render_llm_explanation_panel()

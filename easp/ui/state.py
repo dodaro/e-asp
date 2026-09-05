@@ -38,6 +38,8 @@ def init_state() -> None:
         "inspection_selected_literal": str,
         "chain": list,
         "responses": list,
+        "cost_level": lambda: None,
+        "weak_constraints": list,
         "selected_answer_set": int,
         "settings": Settings.load,
         "llm_explanation": str,
@@ -82,6 +84,8 @@ def reset_explanation_state() -> None:
     st.session_state.answer_atoms = []
     st.session_state.chain = []
     st.session_state.responses = []
+    st.session_state.cost_level = None
+    st.session_state.weak_constraints = []
     st.session_state.selected_answer_set = 0
     reset_inspection_selection()
     clear_llm_explanation()

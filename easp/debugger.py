@@ -38,7 +38,13 @@ from typing import Iterable
 from . import asp_parser
 from .clingo_runner import ClingoRunner, SolveSummary
 from .config import Settings
-from .models import CostLevel, QueryAtom, UnsatisfiableCore
+from .models import (
+    CostLevel,
+    QueryAtom,
+    UnsatisfiableCore,
+    WeakConstraint,
+    WeakConstraintInstance,
+)
 
 
 class Debugger:
@@ -199,11 +205,14 @@ class Debugger:
         is shown (with cost 0) even when the optimum does not pay it."""
         self.optimization_problem = False
         self.declared_levels: list[str] = []
+        #: Weak-constraint statements as written, in program order.
+        self.weak_constraints: list[str] = []
         for raw_line in self._apply_annotations(program).splitlines():
             line = raw_line.strip()
             if not line.startswith((":~", "#minimize", "#maximize")):
                 continue
             self.optimization_problem = True
+            self._add_unique(self.weak_constraints, line)
             try:
                 level = self.read_costs(line)[2]
             except Exception:
@@ -218,6 +227,108 @@ class Debugger:
 
     def get_cost_level(self) -> list[CostLevel]:
         return [CostLevel(level, cost) for level, cost in self.level_to_cost.items()]
+
+    def get_weak_constraints(self, level: str) -> list[WeakConstraint]:
+        """Weak constraints that can pay a cost at ``level``, each with the
+        ground instances the inspected answer set violates.
+
+        A constraint with no instance is not violated and pays nothing; it is
+        still reported, so the summary of an optimality explanation shows the
+        whole picture of the level. Constraints written with a variable level
+        (``[W@L]``) are reported at the level(s) their instances land on.
+        """
+        instances = self._violated_weak_instances()
+        summaries: list[WeakConstraint] = []
+        for index, statement in enumerate(self.weak_constraints):
+            violated = instances.get(index, {}).get(level, [])
+            if not violated and self._declared_level(statement) != level:
+                continue
+            summaries.append(
+                WeakConstraint(
+                    rule=statement,
+                    level=level,
+                    cost=sum(item.weight for item in violated),
+                    instances=violated,
+                )
+            )
+        return summaries
+
+    def _declared_level(self, statement: str) -> str:
+        """Level written in a weak constraint, or "" when it is a variable."""
+        try:
+            level = self.read_costs(statement)[2]
+        except Exception:
+            return ""
+        return level if re.fullmatch(r"-?\d+|[a-z]\w*", level) else ""
+
+    def _violated_weak_instances(
+        self,
+    ) -> dict[int, dict[str, list[WeakConstraintInstance]]]:
+        """Ground the body of every weak constraint against the inspected
+        answer set and return, per statement and level, the instances that
+        hold (i.e. the ones that actually pay their weight).
+
+        The answer set is replayed as a set of facts, so default negation in
+        the bodies is evaluated against exactly the inspected model.
+        """
+        rules: list[str] = []
+        for index, statement in enumerate(self.weak_constraints):
+            try:
+                discriminant, weight, level = self.read_costs(statement)
+                body = self.generate_body(statement)
+            except Exception:
+                continue  # unparsable statement: simply not summarized
+            if not body:
+                continue
+            rules.append(f"__weak({index},{level},{weight},t({discriminant})) :- {body}.")
+        if not rules:
+            return {}
+
+        program = "\n".join([f"{atom}." for atom in self._answer_set_atoms()] + rules) + "\n"
+        try:
+            summary = self.runner.solve(program, models=1)
+        except Exception:
+            return {}
+        if not summary.witnesses:
+            return {}
+
+        found: dict[int, dict[str, list[WeakConstraintInstance]]] = {}
+        for atom in summary.witnesses[0]:
+            parsed = self._parse_weak_atom(atom)
+            if parsed is None:
+                continue
+            index, level, instance = parsed
+            level_map = found.setdefault(index, {})
+            # Weak-constraint instances with the same terms and weight count
+            # once, as clingo does.
+            if instance not in level_map.setdefault(level, []):
+                level_map[level].append(instance)
+        return found
+
+    @staticmethod
+    def _parse_weak_atom(atom: str) -> tuple[int, str, WeakConstraintInstance] | None:
+        """Read back a ``__weak(<index>,<level>,<weight>,t(<terms>))`` atom."""
+        if not atom.startswith("__weak(") or not atom.endswith(")"):
+            return None
+        parts = asp_parser.split_top_level(atom[len("__weak(") : -1])
+        if len(parts) != 4:
+            return None
+        index, level, weight, terms = parts
+        if not index.isdigit() or not weight.lstrip("-").isdigit():
+            return None
+        if terms.startswith("t(") and terms.endswith(")"):
+            terms = terms[2:-1].strip()
+        return int(index), level, WeakConstraintInstance(terms, int(weight))
+
+    def _answer_set_atoms(self) -> list[str]:
+        """True atoms of the inspected answer set, internal bookkeeping atoms
+        (``aux``/``__debug``/``__support``) excluded."""
+        atoms: list[str] = []
+        for section in (self.initial_facts, self.derived_atoms):
+            for atom in section:
+                if not atom.startswith(("aux(", "__")):
+                    self._add_unique(atoms, atom)
+        return atoms
 
     # ------------------------------------------------------------------
     # Entry points of the three debugging modes
@@ -262,7 +373,7 @@ class Debugger:
     # ------------------------------------------------------------------
 
     def set_rules_for_order(self, program: str, atom: QueryAtom) -> str:
-        """Mark with ``@ignore`` every line that mentions an atom assigned by
+        """Mark with ``@comment`` every line that mentions an atom assigned by
         the solver *after* the analyzed atom: those assignments cannot be part
         of the reason the analyzed atom got its value."""
         later_atoms: list[str] = []
@@ -292,12 +403,12 @@ class Debugger:
         builder: list[str] = []
         for raw_line in program.splitlines():
             # Match (and tag) the line without its inline comment, so a word
-            # inside a comment cannot trigger the @ignore and the tag itself
+            # inside a comment cannot trigger the @comment and the tag itself
             # cannot end up inside a comment.
             line = asp_parser.strip_line_comment(raw_line)
             stripped = line.strip()
             if stripped and not stripped.startswith("%") and any(p.search(line) for p in patterns):
-                builder.append(f"{line}@ignore")
+                builder.append(f"{line}@comment")
             else:
                 builder.append(raw_line)
         return "\n".join(builder) + "\n"
@@ -321,9 +432,9 @@ class Debugger:
                 builder.append(f":- not {query.atom}." if query.value == QueryAtom.FALSE else f":- {query.atom}.")
             elif query in chain:
                 builder.append(
-                    f":- {query.atom}.@ignore"
+                    f":- {query.atom}.@comment"
                     if query.value == QueryAtom.FALSE
-                    else f":- not {query.atom}.@ignore"
+                    else f":- not {query.atom}.@comment"
                 )
             else:
                 # Freeze the literal to its value in the answer set.
@@ -390,14 +501,14 @@ class Debugger:
             if line.startswith("#") and not line.startswith(("#minimize", "#maximize")):
                 # #show and other directives must not be instrumented as facts.
                 continue
-            if "@ignore" in line:
-                # Ignored rules (user annotation or internal marker) are
-                # removed from the debugging program entirely.
+            if "@comment" in line:
+                # Commented-out rules (user annotation or internal marker)
+                # are removed from the debugging program entirely.
                 continue
-            if "@correct" in line:
+            if "@ignore" in line:
                 # Trusted rule: kept active but WITHOUT a guard, so it can
                 # never be blamed -- blame flows through it to its premises.
-                builder.append(line.replace("@correct", "").strip())
+                builder.append(line.replace("@ignore", "").strip())
                 continue
             # Inline comments would otherwise be instrumented into the rule.
             line = asp_parser.strip_line_comment(line).strip()
@@ -605,12 +716,12 @@ class Debugger:
     @staticmethod
     def _grounding_context(program: str) -> str:
         """Program text used as context when grounding helper rules
-        (annotations removed, @ignore'd statements dropped)."""
+        (annotations removed, @comment'd statements dropped)."""
         lines: list[str] = []
         for raw_line in program.splitlines():
-            if "@ignore" in raw_line:
+            if "@comment" in raw_line:
                 continue
-            line = raw_line.replace("@correct", "").strip()
+            line = raw_line.replace("@ignore", "").strip()
             if line:
                 lines.append(line)
         return "\n".join(lines)
@@ -618,13 +729,13 @@ class Debugger:
     @staticmethod
     def _apply_annotations(program: str) -> str:
         """Program as clingo must see it when solving: statements annotated
-        with ``@ignore`` are removed, ``@correct`` markers are stripped (the
+        with ``@comment`` are removed, ``@ignore`` markers are stripped (the
         rule itself stays active)."""
         lines: list[str] = []
         for line in program.splitlines():
-            if "@ignore" in line:
+            if "@comment" in line:
                 continue
-            lines.append(line.replace("@correct", "").rstrip())
+            lines.append(line.replace("@ignore", "").rstrip())
         return "\n".join(lines) + "\n"
 
     @staticmethod

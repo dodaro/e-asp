@@ -99,12 +99,12 @@ def normalize_program(program: str) -> str:
             statements.append(statement)
 
     def absorb_marker(pos: int) -> int:
-        """Keep a user ``@ignore``/``@correct`` annotation written after the
+        """Keep a user ``@comment``/``@ignore`` annotation written after the
         terminator attached to its statement."""
         j = pos + 1
         while j < len(text) and text[j] in " \t":
             j += 1
-        for marker in ("@ignore", "@correct"):
+        for marker in ("@comment", "@ignore"):
             if text.startswith(marker, j):
                 return j + len(marker) - 1
         return pos

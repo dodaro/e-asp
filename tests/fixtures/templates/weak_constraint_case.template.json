@@ -1,0 +1,32 @@
+{
+  "name": "my_weak_constraint_case",
+  "description": "Copy this file into tests/fixtures/debugger_cases and fill in the weak constraints expected at each optimization level.",
+  "program": "{a; b}.\n:- not a.\n:~ a. [3@1,a]\n:~ b. [5@1,b]\n",
+  "debug_rules": true,
+  "debug_answer_set": true,
+  "answer_set_count": 1,
+  "answer_set_index": 0,
+  "expected_answer_sets": [
+    ["a"]
+  ],
+  "weak_constraints": [
+    {
+      "level": "1",
+      "weak_constraints_ordered": false,
+      "expected": [
+        {
+          "rule": ":~ a. [3@1,a]",
+          "violated": true,
+          "cost": 3,
+          "instances": [{"terms": "a", "weight": 3}]
+        },
+        {
+          "rule": ":~ b. [5@1,b]",
+          "violated": false,
+          "cost": 0,
+          "instances": []
+        }
+      ]
+    }
+  ]
+}

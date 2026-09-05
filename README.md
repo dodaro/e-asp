@@ -14,7 +14,9 @@ actually asks while developing:
   conflict depends on.
 - **Why is there no answer set with a better cost?** For optimization
   problems (weak constraints, `#minimize`/`#maximize`), E-ASP explains the
-  cost paid at each optimization level.
+  cost paid at each optimization level and recaps every weak constraint of
+  that level, telling violated from unviolated ones and showing what each
+  of them pays.
 - **What is this aggregate doing?** `#count`/`#sum` aggregates appearing in
   an explanation can be expanded interactively, showing every ground
   instance with the truth value of each element.
@@ -57,7 +59,10 @@ Streamlit opens the app in the browser. Typical workflow:
    explanation of the incoherence.
 3. **Inspection** — select any literal (true or false) and ask for its
    explanation; for optimization problems the *Cost Inspection* section
-   explains why no cheaper model exists at a given level.
+   explains why no cheaper model exists at a given level. The resulting
+   page opens with a *Weak Constraints* recap of that level: which
+   constraints the answer set violates, which it does not, the cost of each
+   one and, for the violated ones, their ground instances.
 4. **Explanation** — the result is split into rules, input facts and
    literals. Aggregate rules can be expanded; literals can be explained
    further (*Next Literal Explanation*), building the explanation chain.
@@ -68,8 +73,8 @@ Two annotations can be appended after the final dot of a rule (see the
 *Rule annotations* panel in the editor):
 
 ```prolog
-busy(D) :- assigned(P,D). @correct   % trusted: never blamed, blame flows through it
-:- busy(D), holiday(D).   @ignore    % excluded entirely, like commenting it out
+busy(D) :- assigned(P,D). @ignore    % never blamed, blame flows through it
+:- busy(D), holiday(D).   @comment   % excluded entirely, like commenting it out
 ```
 
 ### Supported subset

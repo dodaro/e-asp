@@ -7,13 +7,14 @@ from typing import Any
 from unittest import TestCase
 
 from easp import asp_parser
-from easp.models import QueryAtom, Response
+from easp.models import CostLevel, QueryAtom, Response, WeakConstraint
 from easp.services import (
     ComputeAnswerSetsService,
     DebugProgramService,
     ExplainAtomService,
     Justifier,
     RetrieveAtomsService,
+    WeakConstraintsService,
 )
 
 
@@ -214,6 +215,54 @@ def assert_aggregate_expansions(test: TestCase, case: DebuggerCase) -> None:
                 _normalize_truth_mapping(actual_truth),
                 _normalize_truth_mapping(expected_truth),
             )
+
+
+def assert_weak_constraints(test: TestCase, case: DebuggerCase) -> None:
+    expected_levels = case.data.get("weak_constraints")
+    if not expected_levels:
+        test.skipTest(f"{case.name}: no weak_constraints configured.")
+
+    justifier = _new_justifier(case)
+    _compute_answer_sets(test, justifier, case)
+    RetrieveAtomsService(justifier, int(case.data.get("answer_set_index", 0))).run()
+
+    for expected_level in expected_levels:
+        level = str(expected_level["level"])
+        constraints = WeakConstraintsService(justifier, CostLevel(level, 0)).run()
+        _assert_sequence(
+            test,
+            [_weak_constraint_to_record(constraint) for constraint in constraints],
+            [
+                _expected_weak_constraint_to_record(expected)
+                for expected in expected_level["expected"]
+            ],
+            ordered=bool(expected_level.get("weak_constraints_ordered", False)),
+        )
+
+
+def _weak_constraint_to_record(constraint: WeakConstraint) -> dict[str, Any]:
+    return {
+        "rule": constraint.rule,
+        "violated": constraint.violated,
+        "cost": constraint.cost,
+        "instances": [
+            {"terms": instance.terms, "weight": instance.weight}
+            for instance in constraint.instances
+        ],
+    }
+
+
+def _expected_weak_constraint_to_record(expected: dict[str, Any]) -> dict[str, Any]:
+    instances = [
+        {"terms": str(instance["terms"]), "weight": int(instance["weight"])}
+        for instance in expected.get("instances", [])
+    ]
+    return {
+        "rule": str(expected["rule"]),
+        "violated": bool(expected.get("violated", bool(instances))),
+        "cost": int(expected.get("cost", sum(item["weight"] for item in instances))),
+        "instances": instances,
+    }
 
 
 def _new_justifier(case: DebuggerCase) -> Justifier:

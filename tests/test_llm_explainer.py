@@ -8,8 +8,14 @@ from easp.llm_explainer import (
     AggregateElement,
     _aggregate_details_section,
     _responses_section,
+    _weak_constraints_section,
 )
-from easp.models import FREE_CHOICE_EXPLANATION
+from easp.models import (
+    FREE_CHOICE_EXPLANATION,
+    CostLevel,
+    WeakConstraint,
+    WeakConstraintInstance,
+)
 from easp.ui.actions import _aggregate_elements_for_prompt
 
 
@@ -86,3 +92,43 @@ class FreeChoicePromptTests(TestCase):
 
     def test_other_empty_explanation_types_are_not_misclassified(self) -> None:
         self.assertEqual(_responses_section([], free_choice=False), "")
+
+
+class WeakConstraintPromptTests(TestCase):
+    def setUp(self) -> None:
+        self.constraints = [
+            WeakConstraint(
+                rule=":~ shift(N,1). [3@1,N]",
+                level="1",
+                cost=3,
+                instances=[WeakConstraintInstance("a", 3)],
+            ),
+            WeakConstraint(rule=":~ shift(N,2). [5@1,N]", level="1"),
+        ]
+
+    def test_violated_and_unviolated_constraints_are_both_reported(self) -> None:
+        text = _weak_constraints_section(CostLevel("1", 3), self.constraints)
+
+        self.assertIn("total cost 3, 1 of 2 violated", text)
+        self.assertIn(":~ shift(N,1). [3@1,N] -> violated, cost 3", text)
+        self.assertIn(":~ shift(N,2). [5@1,N] -> not violated, cost 0", text)
+        self.assertIn("instance a: cost 3", text)
+
+    def test_placeholder_terms_are_spelled_out(self) -> None:
+        text = _weak_constraints_section(
+            CostLevel("1", 4),
+            [
+                WeakConstraint(
+                    rule=":~ a. [4@1]",
+                    level="1",
+                    cost=4,
+                    instances=[WeakConstraintInstance("empty", 4)],
+                )
+            ],
+        )
+
+        self.assertIn("instance no terms: cost 4", text)
+
+    def test_section_is_omitted_outside_the_optimality_explanation(self) -> None:
+        self.assertEqual(_weak_constraints_section(None, self.constraints), "")
+        self.assertEqual(_weak_constraints_section(CostLevel("1", 0), []), "")

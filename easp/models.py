@@ -83,3 +83,38 @@ class CostLevel:
 
     def __str__(self) -> str:
         return f"Cost of {self.cost} at level {self.level}"
+
+
+@dataclass(frozen=True)
+class WeakConstraintInstance:
+    """One ground instance of a weak constraint violated by the answer set.
+
+    ``terms`` is the discriminant tuple written after the level (``empty``
+    when the weak constraint declares none) and ``weight`` the cost that
+    instance pays.
+    """
+
+    terms: str
+    weight: int
+
+    def __str__(self) -> str:
+        return f"{self.terms}: {self.weight}"
+
+
+@dataclass
+class WeakConstraint:
+    """A weak constraint of the program, seen from one optimization level.
+
+    ``instances`` holds the ground instances whose body holds in the
+    inspected answer set: an empty list means the constraint is not
+    violated and therefore pays nothing.
+    """
+
+    rule: str
+    level: str
+    cost: int = 0
+    instances: list[WeakConstraintInstance] = field(default_factory=list)
+
+    @property
+    def violated(self) -> bool:
+        return bool(self.instances)

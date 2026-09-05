@@ -10,7 +10,7 @@ from __future__ import annotations
 from . import asp_parser
 from .config import Settings
 from .debugger import Debugger
-from .models import CostLevel, QueryAtom, Response
+from .models import CostLevel, QueryAtom, Response, WeakConstraint
 
 
 def partition_aggregate_values(
@@ -96,6 +96,10 @@ class Justifier:
         """Explain the cost paid at one optimization level."""
         core = self.debugger.debug_cost(level.level, self.query_atoms, self.program, check_opt)
         return core.get_rules()
+
+    def weak_constraints_of_level(self, level: CostLevel) -> list[WeakConstraint]:
+        """Weak constraints of one optimization level, violated or not."""
+        return self.debugger.get_weak_constraints(level.level)
 
     def debug(self) -> list[Response]:
         """Explain why the program is unsatisfiable."""
@@ -199,6 +203,15 @@ class ExplainCostService:
 
     def run(self) -> list[Response]:
         return self.justifier.justify_cost(self.level, self.check_opt)
+
+
+class WeakConstraintsService:
+    def __init__(self, justifier: Justifier, level: CostLevel) -> None:
+        self.justifier = justifier
+        self.level = level
+
+    def run(self) -> list[WeakConstraint]:
+        return self.justifier.weak_constraints_of_level(self.level)
 
 
 class DebugProgramService:

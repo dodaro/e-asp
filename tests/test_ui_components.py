@@ -10,6 +10,7 @@ from easp.ui.components import (
     _aggregate_element_label,
     _filter_inspection_atoms,
     _literal_predicate,
+    _weak_instance_label,
 )
 
 
@@ -131,3 +132,12 @@ class RuleRenderingTests(TestCase):
             components.render_response_groups([], allow_literal_explain=True)
 
         info.assert_called_once_with(FREE_CHOICE_EXPLANATION)
+
+
+class WeakConstraintRenderingTests(TestCase):
+    def test_discriminant_terms_are_shown_as_written(self) -> None:
+        self.assertEqual(_weak_instance_label('"pat1",1'), '"pat1",1')
+
+    def test_missing_terms_are_named_instead_of_showing_the_placeholder(self) -> None:
+        self.assertEqual(_weak_instance_label("empty"), "(no terms)")
+        self.assertEqual(_weak_instance_label("  "), "(no terms)")

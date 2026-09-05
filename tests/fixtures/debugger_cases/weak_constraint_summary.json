@@ -1,0 +1,62 @@
+{
+  "name": "weak_constraint_summary",
+  "description": "The optimality summary must list every weak constraint that can pay at a level, violated or not, with the cost each one pays. The two constraints force a onto day 1 or 2 and b onto day 2 or 3, so the unique optimum is shift(a,1), shift(b,3): level 1 costs 3+2=5 and ':~ shift(N,2).' stays unviolated, while the single constraint of level 2 is not violated because a and b never share a day.",
+  "program": "day(1..3).\nnurse(a).\nnurse(b).\n{ shift(N,D) : day(D) } = 1 :- nurse(N).\n:- shift(a,3).\n:- shift(b,1).\n:~ shift(N,1). [3@1,N]\n:~ shift(N,2). [5@1,N]\n:~ shift(N,3). [2@1,N]\n:~ shift(a,D), shift(b,D). [7@2,D]\n",
+  "expected_answer_sets": [
+    [
+      "day(1)",
+      "day(2)",
+      "day(3)",
+      "nurse(a)",
+      "nurse(b)",
+      "shift(a,1)",
+      "shift(b,3)"
+    ]
+  ],
+  "weak_constraints": [
+    {
+      "level": "1",
+      "expected": [
+        {
+          "rule": ":~ shift(N,1). [3@1,N]",
+          "violated": true,
+          "cost": 3,
+          "instances": [
+            {
+              "terms": "a",
+              "weight": 3
+            }
+          ]
+        },
+        {
+          "rule": ":~ shift(N,2). [5@1,N]",
+          "violated": false,
+          "cost": 0,
+          "instances": []
+        },
+        {
+          "rule": ":~ shift(N,3). [2@1,N]",
+          "violated": true,
+          "cost": 2,
+          "instances": [
+            {
+              "terms": "b",
+              "weight": 2
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "level": "2",
+      "expected": [
+        {
+          "rule": ":~ shift(a,D), shift(b,D). [7@2,D]",
+          "violated": false,
+          "cost": 0,
+          "instances": []
+        }
+      ]
+    }
+  ]
+}
