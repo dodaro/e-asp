@@ -26,6 +26,8 @@ values.
 - `aggregate_expansions`: aggregate expansion checks produced by
   `Justifier.expand_aggregate(...)`. Element labels expose their grounded
   source bindings, for example `<D=2, PH=1>`.
+- `expected_cost_levels`: the optimization levels of the inspected answer set
+  with the cost paid at each of them, as objects with `level` and `cost`.
 - `weak_constraints`: per-level checks of the optimality summary. Each entry
   has a `level` and the `expected` weak constraints of that level, described
   by `rule`, `violated`, `cost` and the `instances` (`terms` plus `weight`)
@@ -44,6 +46,7 @@ their numeric values `0`, `1`, `2`, `3`.
 Atom values can be written as `true`, `false`, `undefined`, or `not_set`.
 
 By default, answer sets and responses are compared without caring about order.
-Set `answer_sets_ordered`, `responses_ordered`, `unsat_responses_ordered`, or
-`weak_constraints_ordered` to `true` when order is part of what you want to
-verify.
+Set `answer_sets_ordered`, `responses_ordered`, `unsat_responses_ordered`,
+`cost_levels_ordered`, or `weak_constraints_ordered` to `true` when order is
+part of what you want to verify. The violated instances of a weak constraint
+are always compared as a set: their order is the solver's.

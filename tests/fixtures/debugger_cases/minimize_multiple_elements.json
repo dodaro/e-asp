@@ -1,0 +1,33 @@
+{
+  "name": "minimize_multiple_elements",
+  "description": "Every element of a #minimize statement carries its own weight, discriminant, condition and level. Here q(1) pays 2 while p(2) and p(3) pay 1 each, so level 1 costs 4. Reading only the first element of the statement (and joining every element's condition into a single body) used to report a cost of 0 and hide the second element from the optimality summary.",
+  "program": "p(1).\np(2).\np(3).\n{q(X)} :- p(X).\n:- not q(1).\n#minimize{ 2@1,X : q(X) ; 1@1,X : p(X), not q(X) }.\n",
+  "expected_answer_sets": [
+    ["p(1)", "p(2)", "p(3)", "q(1)"]
+  ],
+  "expected_cost_levels": [
+    {"level": "1", "cost": 4}
+  ],
+  "weak_constraints": [
+    {
+      "level": "1",
+      "expected": [
+        {
+          "rule": "#minimize{ 2@1,X : q(X) }.",
+          "violated": true,
+          "cost": 2,
+          "instances": [{"terms": "1", "weight": 2}]
+        },
+        {
+          "rule": "#minimize{ 1@1,X : p(X), not q(X) }.",
+          "violated": true,
+          "cost": 2,
+          "instances": [
+            {"terms": "2", "weight": 1},
+            {"terms": "3", "weight": 1}
+          ]
+        }
+      ]
+    }
+  ]
+}

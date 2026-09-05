@@ -6,6 +6,7 @@ from tests.debugger_case_runner import (
     assert_aggregate_expansions,
     assert_answer_sets,
     assert_atoms,
+    assert_cost_levels,
     assert_literal_explanations,
     assert_unsat_debug,
     assert_weak_constraints,
@@ -47,6 +48,12 @@ class DebuggerFixtureTests(TestCase):
         for case in self.cases:
             with self.subTest(case=case.name):
                 assert_aggregate_expansions(self, case)
+
+    def test_cost_levels(self) -> None:
+        self._require_cases()
+        for case in self.cases:
+            with self.subTest(case=case.name):
+                assert_cost_levels(self, case)
 
     def test_weak_constraints(self) -> None:
         self._require_cases()

@@ -1,0 +1,27 @@
+{
+  "name": "maximize_sign",
+  "description": "clingo rewrites #maximize{w@l,t : b} into #minimize{-w@l,t : b}, so a maximized element pays the opposite of the weight written down. Taking items 1 and 3 is worth 5+4, which clingo reports as an optimization value of -9; reporting +9 instead would also invert the comparison used to explain optimality.",
+  "program": "v(1,5).\nv(2,3).\nv(3,4).\n{take(X)} :- v(X,_).\n:- #count{X : take(X)} > 2.\n#maximize{ W@1,X : take(X), v(X,W) }.\n",
+  "expected_answer_sets": [
+    ["v(1,5)", "v(2,3)", "v(3,4)", "take(1)", "take(3)"]
+  ],
+  "expected_cost_levels": [
+    {"level": "1", "cost": -9}
+  ],
+  "weak_constraints": [
+    {
+      "level": "1",
+      "expected": [
+        {
+          "rule": "#maximize{ W@1,X : take(X), v(X,W) }.",
+          "violated": true,
+          "cost": -9,
+          "instances": [
+            {"terms": "1", "weight": -5},
+            {"terms": "3", "weight": -4}
+          ]
+        }
+      ]
+    }
+  ]
+}

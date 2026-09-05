@@ -22,6 +22,12 @@ INSPECTION_WIDGET_KEYS = (
     "inspection_predicate_filter",
     "inspection_literal_table",
 )
+ANSWER_SET_WIDGET_KEYS = (
+    "answer_set_search",
+    "answer_set_table",
+    "answer_set_atom_search",
+    "answer_set_atom_table",
+)
 
 
 def init_state() -> None:
@@ -87,8 +93,14 @@ def reset_explanation_state() -> None:
     st.session_state.cost_level = None
     st.session_state.weak_constraints = []
     st.session_state.selected_answer_set = 0
+    reset_answer_set_selection()
     reset_inspection_selection()
     clear_llm_explanation()
+
+
+def reset_answer_set_selection() -> None:
+    for key in ANSWER_SET_WIDGET_KEYS:
+        st.session_state.pop(key, None)
 
 
 def reset_inspection_selection() -> None:

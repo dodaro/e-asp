@@ -13,6 +13,16 @@
       "shift(b,3)"
     ]
   ],
+  "expected_cost_levels": [
+    {
+      "level": "1",
+      "cost": 5
+    },
+    {
+      "level": "2",
+      "cost": 0
+    }
+  ],
   "weak_constraints": [
     {
       "level": "1",

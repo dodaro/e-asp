@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import re
 from collections import OrderedDict
+from typing import NamedTuple
 
 
 # An ASP variable starts with an uppercase letter (the anonymous variable "_"
@@ -177,20 +178,124 @@ def variables_of(text: str) -> list[str]:
     return variables
 
 
+class OptimizationElement(NamedTuple):
+    """One element of a weak constraint or ``#minimize``/``#maximize``.
+
+    ``:~ body. [w@l,t1,t2]`` always holds a single element, while a
+    ``#minimize``/``#maximize`` statement holds one per ``;``-separated
+    element and those may sit at *different* levels -- which is why the
+    debugger works element by element rather than statement by statement.
+
+    ``terms`` is the discriminant tuple written after the level (empty when
+    the element declares none) and ``body`` the condition under which the
+    element pays its ``weight`` (empty for an unconditional element).
+    ``weight`` is kept exactly as written, so use ``cost`` whenever the value
+    has to be added up.
+    """
+
+    weight: str
+    level: str
+    terms: str
+    body: str
+    #: Whether the element comes from a ``#maximize`` statement.
+    maximize: bool = False
+
+    @property
+    def cost(self) -> str:
+        """The weight *as a cost*, with clingo's sign: clingo rewrites
+        ``#maximize{w@l,t : b}`` into ``#minimize{-w@l,t : b}``, so a
+        maximized element pays the opposite of the weight written down."""
+        return _negated(self.weight) if self.maximize else self.weight
+
+
+def _negated(weight: str) -> str:
+    """``-weight``, keeping the result a valid ASP term for any expression."""
+    text = weight.strip()
+    if re.fullmatch(r"-?\d+", text):
+        return str(-int(text))
+    return f"-({text})"
+
+
+OPTIMIZATION_PREFIXES = (":~", "#minimize", "#maximize")
+
+
+def optimization_elements(statement: str) -> list[OptimizationElement]:
+    """Split a weak constraint or #minimize/#maximize statement into its
+    elements; anything else yields an empty list.
+
+    As in clingo, an element written without ``@level`` sits at level 0.
+    """
+    text = statement.strip()
+
+    if text.startswith(":~"):
+        bracket = _find_weight_bracket(text)
+        end = text.rfind("]")
+        if bracket < 0 or end <= bracket:
+            return []
+        body = _normalize_spaces(strip_final_dot(text[2:bracket]))
+        return [_optimization_element(text[bracket + 1 : end], body)]
+
+    if text.startswith(("#minimize", "#maximize")):
+        start = text.find("{")
+        end = text.rfind("}")
+        if start < 0 or end <= start:
+            return []
+        maximize = text.startswith("#maximize")
+        elements: list[OptimizationElement] = []
+        for element in split_top_level(text[start + 1 : end], ";"):
+            # The condition starts at the first top-level ':': colons nested
+            # in an aggregate of the condition must not split the element.
+            colon = _find_top_level(element, ":")
+            weight_block = element if colon < 0 else element[:colon]
+            body = "" if colon < 0 else _normalize_spaces(element[colon + 1 :])
+            elements.append(_optimization_element(weight_block, body, maximize))
+        return elements
+
+    return []
+
+
+def _optimization_element(
+    weight_block: str,
+    body: str,
+    maximize: bool = False,
+) -> OptimizationElement:
+    """Parse a ``weight[@level][,terms]`` block into its three parts."""
+    block = weight_block.strip()
+    at = _find_top_level(block, "@")
+    if at >= 0:
+        weight = block[:at]
+        tail = block[at + 1 :]
+    else:
+        weight, tail = "", block
+
+    comma = _find_top_level(tail, ",")
+    head = tail if comma < 0 else tail[:comma]
+    terms = "" if comma < 0 else tail[comma + 1 :]
+    if at < 0:
+        # No '@level': the block is "weight[,terms]" and the level is 0.
+        weight, level = head, "0"
+    else:
+        level = head
+    return OptimizationElement(
+        weight.strip(),
+        level.strip(),
+        _normalize_spaces(terms),
+        body.strip(),
+        maximize,
+    )
+
+
 def body_of(rule: str) -> str:
     """Return the body of a rule/weak constraint as a comma-separated string
-    without spaces (used to rebuild ``aux`` rules for weak constraints)."""
-    text = rule.strip()
-    if text.startswith(":~"):
-        # Weak constraint: body is everything between ':~' and '[cost@level]'.
-        text = text[2:].strip()
-        bracket = _find_weight_bracket(text)
-        if bracket >= 0:
-            text = text[:bracket]
-        return _normalize_spaces(strip_final_dot(text))
+    without spaces (used to rebuild ``aux`` rules for weak constraints).
 
-    if text.startswith("#minimize") or text.startswith("#maximize"):
-        return _normalize_spaces(_body_from_optimization_statement(text))
+    An optimization statement yields the condition of its *first* element
+    only; call ``optimization_elements`` to reach them all.
+    """
+    text = rule.strip()
+    if text.startswith(OPTIMIZATION_PREFIXES):
+        elements = optimization_elements(text)
+        return elements[0].body if elements else ""
 
     if ":-" in text:
         return _normalize_spaces(strip_final_dot(text.split(":-", 1)[1]))
@@ -198,20 +303,14 @@ def body_of(rule: str) -> str:
 
 
 def cost_of(rule: str) -> str:
-    """Extract the ``cost@level[,terms]`` block of a weak constraint or
-    #minimize/#maximize statement."""
-    text = rule.strip()
-    if text.startswith(":~"):
-        start = _find_weight_bracket(text)
-        if start >= 0:
-            end = text.rfind("]")
-            if end > start:
-                return text[start + 1 : end].strip()
-
-    match = re.search(r"(\S+@\S+?)(?:\s*:|\s*[;}])", text)
-    if match:
-        return match.group(1).strip()
-    raise ValueError(f"Cannot read optimization cost from rule: {rule}")
+    """Extract the ``cost@level[,terms]`` block of the *first* element of a
+    weak constraint or #minimize/#maximize statement."""
+    elements = optimization_elements(rule)
+    if not elements:
+        raise ValueError(f"Cannot read optimization cost from rule: {rule}")
+    element = elements[0]
+    block = f"{element.weight}@{element.level}"
+    return f"{block},{element.terms}" if element.terms else block
 
 
 def aggregate_expression(rule: str) -> str:
@@ -382,17 +481,24 @@ def _find_weight_bracket(text: str) -> int:
     return -1
 
 
-def _body_from_optimization_statement(text: str) -> str:
-    """Collect the condition parts of a #minimize/#maximize statement."""
-    start = text.find("{")
-    end = text.rfind("}")
-    if start < 0 or end <= start:
-        return ""
-    bodies: list[str] = []
-    for element in split_top_level(text[start + 1 : end], ";"):
-        if ":" in element:
-            bodies.append(element.split(":", 1)[1].strip())
-    return ",".join(part for part in bodies if part)
+def _find_top_level(text: str, character: str) -> int:
+    """Index of the first ``character`` that is not inside quotes, parentheses,
+    braces or brackets; -1 when there is none."""
+    depth = 0
+    quote: str | None = None
+    for i, char in enumerate(text):
+        if quote:
+            if char == quote and (i == 0 or text[i - 1] != "\\"):
+                quote = None
+        elif char in {"'", '"'}:
+            quote = char
+        elif char in "({[":
+            depth += 1
+        elif char in ")}]":
+            depth = max(0, depth - 1)
+        elif char == character and depth == 0:
+            return i
+    return -1
 
 
 def _iter_predicate_calls(text: str):

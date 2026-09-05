@@ -217,6 +217,29 @@ def assert_aggregate_expansions(test: TestCase, case: DebuggerCase) -> None:
             )
 
 
+def assert_cost_levels(test: TestCase, case: DebuggerCase) -> None:
+    expected = case.data.get("expected_cost_levels")
+    if expected is None:
+        test.skipTest(f"{case.name}: no expected_cost_levels configured.")
+
+    justifier = _new_justifier(case)
+    _compute_answer_sets(test, justifier, case)
+    RetrieveAtomsService(justifier, int(case.data.get("answer_set_index", 0))).run()
+
+    _assert_sequence(
+        test,
+        [
+            {"level": level.level, "cost": level.cost}
+            for level in justifier.request_cost_level()
+        ],
+        [
+            {"level": str(level["level"]), "cost": int(level["cost"])}
+            for level in expected
+        ],
+        ordered=bool(case.data.get("cost_levels_ordered", False)),
+    )
+
+
 def assert_weak_constraints(test: TestCase, case: DebuggerCase) -> None:
     expected_levels = case.data.get("weak_constraints")
     if not expected_levels:
@@ -245,10 +268,12 @@ def _weak_constraint_to_record(constraint: WeakConstraint) -> dict[str, Any]:
         "rule": constraint.rule,
         "violated": constraint.violated,
         "cost": constraint.cost,
-        "instances": [
-            {"terms": instance.terms, "weight": instance.weight}
-            for instance in constraint.instances
-        ],
+        "instances": _sorted_instances(
+            [
+                {"terms": instance.terms, "weight": instance.weight}
+                for instance in constraint.instances
+            ]
+        ),
     }
 
 
@@ -261,8 +286,14 @@ def _expected_weak_constraint_to_record(expected: dict[str, Any]) -> dict[str, A
         "rule": str(expected["rule"]),
         "violated": bool(expected.get("violated", bool(instances))),
         "cost": int(expected.get("cost", sum(item["weight"] for item in instances))),
-        "instances": instances,
+        "instances": _sorted_instances(instances),
     }
+
+
+def _sorted_instances(instances: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Instances are reported in solver order, which fixtures do not pin
+    down: compare them as a set."""
+    return sorted(instances, key=lambda instance: (instance["terms"], instance["weight"]))
 
 
 def _new_justifier(case: DebuggerCase) -> Justifier:

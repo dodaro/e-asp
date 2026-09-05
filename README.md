@@ -16,7 +16,8 @@ actually asks while developing:
   problems (weak constraints, `#minimize`/`#maximize`), E-ASP explains the
   cost paid at each optimization level and recaps every weak constraint of
   that level, telling violated from unviolated ones and showing what each
-  of them pays.
+  of them pays. Costs use clingo's own sign convention, so a `#maximize`
+  element pays a negative cost.
 - **What is this aggregate doing?** `#count`/`#sum` aggregates appearing in
   an explanation can be expanded interactively, showing every ground
   instance with the truth value of each element.
@@ -54,9 +55,13 @@ Streamlit opens the app in the browser. Typical workflow:
    the debugging modes (*Rules*: rules can be blamed; *Literals*:
    answer-set literals can be blamed) and how many answer sets to compute,
    then press **Explain**.
-2. **Answer Sets** — pick one of the computed answer sets and **Inspect**
-   it. For unsatisfiable programs you are taken directly to the
-   explanation of the incoherence.
+2. **Answer Sets** — the computed answer sets are listed side by side with
+   their content; search them to keep only those containing every atom you
+   type (terms are separated by spaces, press Enter to apply), then browse
+   the atoms of the selected one (searchable the same way) and **Inspect**
+   it. Atoms may be typed the way they read — `shift(carl, 1)` finds
+   `shift("carl",1)`. For unsatisfiable programs you are taken directly to
+   the explanation of the incoherence.
 3. **Inspection** — select any literal (true or false) and ask for its
    explanation; for optimization problems the *Cost Inspection* section
    explains why no cheaper model exists at a given level. The resulting
@@ -65,7 +70,8 @@ Streamlit opens the app in the browser. Typical workflow:
    one and, for the violated ones, their ground instances.
 4. **Explanation** — the result is split into rules, input facts and
    literals. Aggregate rules can be expanded; literals can be explained
-   further (*Next Literal Explanation*), building the explanation chain.
+   further (*Next Literal Explanation*), building the explanation chain. 
+   This feature is in beta.
 
 ### Rule annotations
 

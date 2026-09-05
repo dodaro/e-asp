@@ -8,8 +8,12 @@ from easp.services import partition_aggregate_values
 from easp.ui import components
 from easp.ui.components import (
     _aggregate_element_label,
+    _atoms_of,
     _filter_inspection_atoms,
     _literal_predicate,
+    _active_terms_caption,
+    _matches_query,
+    _query_terms,
     _weak_instance_label,
 )
 
@@ -141,3 +145,83 @@ class WeakConstraintRenderingTests(TestCase):
     def test_missing_terms_are_named_instead_of_showing_the_placeholder(self) -> None:
         self.assertEqual(_weak_instance_label("empty"), "(no terms)")
         self.assertEqual(_weak_instance_label("  "), "(no terms)")
+
+
+class AnswerSetListingTests(TestCase):
+    def test_commas_inside_string_constants_do_not_split_an_atom(self) -> None:
+        self.assertEqual(
+            _atoms_of('day(1), reg("pat,1","bed"), busy(2)'),
+            ["day(1)", 'reg("pat,1","bed")', "busy(2)"],
+        )
+
+    def test_an_empty_answer_set_has_no_atom(self) -> None:
+        self.assertEqual(_atoms_of(""), [])
+
+    def test_an_answer_set_is_searched_like_a_literal(self) -> None:
+        answer_set = 'day(1), shift("carl",1), busy(1)'
+
+        self.assertTrue(_matches_query(answer_set, 'shift("carl",1)'))
+        self.assertTrue(_matches_query(answer_set, "busy"))
+        self.assertTrue(_matches_query(answer_set, ""))
+        self.assertFalse(_matches_query(answer_set, "free"))
+
+    def test_the_search_matches_word_starts_and_not_substrings(self) -> None:
+        self.assertFalse(_matches_query("inactive(1)", "active"))
+        self.assertTrue(_matches_query("active(1)", "active"))
+
+
+class SearchQueryTests(TestCase):
+    def setUp(self) -> None:
+        self.answer_set = 'day(1), shift("carl",1), shift("anna",3), busy(1)'
+
+    def test_every_term_of_the_query_must_be_present(self) -> None:
+        self.assertTrue(_matches_query(self.answer_set, "shift busy"))
+        self.assertTrue(_matches_query(self.answer_set, "carl anna"))
+        self.assertFalse(_matches_query(self.answer_set, "carl bob"))
+        self.assertFalse(_matches_query(self.answer_set, "shift free"))
+
+    def test_extra_whitespace_between_terms_is_ignored(self) -> None:
+        self.assertEqual(_query_terms("  shift   busy  "), ["shift", "busy"])
+        self.assertEqual(_query_terms("   "), [])
+
+    def test_spaces_inside_a_term_do_not_start_a_new_one(self) -> None:
+        self.assertEqual(
+            _query_terms('reg("a b") p(1, 2) x'),
+            ['reg("a b")', "p(1, 2)", "x"],
+        )
+
+    def test_an_empty_query_keeps_everything(self) -> None:
+        self.assertTrue(_matches_query(self.answer_set, ""))
+        self.assertTrue(_matches_query("", ""))
+
+    def test_a_single_term_query_is_unchanged(self) -> None:
+        self.assertTrue(_matches_query(self.answer_set, 'shift("carl",1)'))
+        self.assertFalse(_matches_query(self.answer_set, "free"))
+
+    def test_an_atom_can_be_typed_the_way_it_reads(self) -> None:
+        """Users type shift(carl, 1); clingo prints shift("carl",1)."""
+        for typed in (
+            'shift("carl",1)',
+            "shift(carl,1)",
+            'shift("carl", 1)',
+            "shift( carl , 1 )",
+        ):
+            with self.subTest(typed=typed):
+                self.assertTrue(_matches_query(self.answer_set, typed))
+
+    def test_a_different_atom_still_does_not_match(self) -> None:
+        self.assertFalse(_matches_query(self.answer_set, "shift(bob,1)"))
+        self.assertFalse(_matches_query(self.answer_set, "shift(carl,2)"))
+
+    def test_negation_is_not_collapsed_into_the_predicate(self) -> None:
+        self.assertTrue(_matches_query('not shift("a",1)', "shift"))
+        self.assertTrue(_matches_query('not shift("a",1)', "not"))
+        self.assertFalse(_matches_query('shift("a",1)', "not"))
+
+    def test_the_caption_spells_out_the_applied_terms(self) -> None:
+        self.assertEqual(
+            _active_terms_caption("busy(1) free(2)"),
+            " containing `busy(1)` and `free(2)`",
+        )
+        self.assertEqual(_active_terms_caption("   "), "")
+

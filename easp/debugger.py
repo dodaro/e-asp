@@ -47,6 +47,15 @@ from .models import (
 )
 
 
+#: A level that can be listed before grounding: an integer or a constant name
+#: (a variable level such as ``[C@X]`` is only known once grounded).
+_CONSTANT_LEVEL = re.compile(r"-?\d+|[a-z]\w*")
+
+
+def _is_constant_level(level: str) -> bool:
+    return bool(_CONSTANT_LEVEL.fullmatch(level))
+
+
 class Debugger:
     def __init__(
         self,
@@ -61,7 +70,7 @@ class Debugger:
         #: Weak-constraint bookkeeping (body text -> aux atom, level -> cost...).
         self.weak_to_aux: dict[str, str] = {}
         self.level_to_cost: dict[str, int] = {}
-        self.level_to_aux: dict[str, list[list[str]]] = {}
+        self.level_to_aux: dict[str, list[asp_parser.OptimizationElement]] = {}
         #: Atoms that are facts of the input program.
         self.initial_facts: list[str] = []
         #: True atoms of the inspected answer set that are not facts.
@@ -209,18 +218,13 @@ class Debugger:
         self.weak_constraints: list[str] = []
         for raw_line in self._apply_annotations(program).splitlines():
             line = raw_line.strip()
-            if not line.startswith((":~", "#minimize", "#maximize")):
+            if not line.startswith(asp_parser.OPTIMIZATION_PREFIXES):
                 continue
             self.optimization_problem = True
             self._add_unique(self.weak_constraints, line)
-            try:
-                level = self.read_costs(line)[2]
-            except Exception:
-                continue
-            # Only constant levels can be listed (a variable level such as
-            # [C@X] is known only after grounding).
-            if re.fullmatch(r"-?\d+|[a-z]\w*", level) and level not in self.declared_levels:
-                self.declared_levels.append(level)
+            for element in asp_parser.optimization_elements(line):
+                if _is_constant_level(element.level):
+                    self._add_unique(self.declared_levels, element.level)
 
     def is_opt(self) -> bool:
         return self.optimization_problem
@@ -232,20 +236,22 @@ class Debugger:
         """Weak constraints that can pay a cost at ``level``, each with the
         ground instances the inspected answer set violates.
 
-        A constraint with no instance is not violated and pays nothing; it is
-        still reported, so the summary of an optimality explanation shows the
-        whole picture of the level. Constraints written with a variable level
-        (``[W@L]``) are reported at the level(s) their instances land on.
+        The unit is one optimization *element*, because a #minimize/#maximize
+        statement can hold several, at different levels. An element with no
+        instance is not violated and pays nothing; it is still reported, so
+        the summary of an optimality explanation shows the whole picture of
+        the level. An element written with a variable level (``[W@L]``) is
+        reported at the level(s) its instances land on.
         """
         instances = self._violated_weak_instances()
         summaries: list[WeakConstraint] = []
-        for index, statement in enumerate(self.weak_constraints):
+        for index, (statement, element) in enumerate(self._weak_elements()):
             violated = instances.get(index, {}).get(level, [])
-            if not violated and self._declared_level(statement) != level:
+            if not violated and element.level != level:
                 continue
             summaries.append(
                 WeakConstraint(
-                    rule=statement,
+                    rule=self._element_text(statement, element),
                     level=level,
                     cost=sum(item.weight for item in violated),
                     instances=violated,
@@ -253,34 +259,46 @@ class Debugger:
             )
         return summaries
 
-    def _declared_level(self, statement: str) -> str:
-        """Level written in a weak constraint, or "" when it is a variable."""
-        try:
-            level = self.read_costs(statement)[2]
-        except Exception:
-            return ""
-        return level if re.fullmatch(r"-?\d+|[a-z]\w*", level) else ""
+    def _weak_elements(self) -> list[tuple[str, asp_parser.OptimizationElement]]:
+        """``(statement, element)`` pairs of every optimization element of the
+        program, in program order."""
+        return [
+            (statement, element)
+            for statement in self.weak_constraints
+            for element in asp_parser.optimization_elements(statement)
+        ]
+
+    @staticmethod
+    def _element_text(statement: str, element: asp_parser.OptimizationElement) -> str:
+        """How one element is shown to the user: the statement as written when
+        it carries a single element, otherwise the same statement narrowed to
+        that element alone."""
+        if len(asp_parser.optimization_elements(statement)) == 1:
+            return statement
+        head = "#maximize" if statement.lstrip().startswith("#maximize") else "#minimize"
+        tuple_text = f"{element.weight}@{element.level}"
+        if element.terms:
+            tuple_text += f",{element.terms}"
+        condition = f" : {element.body}" if element.body else ""
+        return f"{head}{{ {tuple_text}{condition} }}."
 
     def _violated_weak_instances(
         self,
     ) -> dict[int, dict[str, list[WeakConstraintInstance]]]:
-        """Ground the body of every weak constraint against the inspected
-        answer set and return, per statement and level, the instances that
-        hold (i.e. the ones that actually pay their weight).
+        """Ground the body of every weak-constraint element against the
+        inspected answer set and return, per element and level, the instances
+        that hold (i.e. the ones that actually pay their weight).
 
         The answer set is replayed as a set of facts, so default negation in
         the bodies is evaluated against exactly the inspected model.
         """
         rules: list[str] = []
-        for index, statement in enumerate(self.weak_constraints):
-            try:
-                discriminant, weight, level = self.read_costs(statement)
-                body = self.generate_body(statement)
-            except Exception:
-                continue  # unparsable statement: simply not summarized
-            if not body:
-                continue
-            rules.append(f"__weak({index},{level},{weight},t({discriminant})) :- {body}.")
+        for index, (_statement, element) in enumerate(self._weak_elements()):
+            head = (
+                f"__weak({index},{element.level},{element.cost},"
+                f"t({element.terms or 'empty'}))"
+            )
+            rules.append(self._aux_rule(head, element.body))
         if not rules:
             return {}
 
@@ -450,16 +468,15 @@ class Debugger:
 
     def add_aux_program(self, program: str) -> str:
         """Add ``aux(discriminant,cost,level) :- body`` next to every weak
-        constraint, so costs can be read back from the answer set."""
+        constraint, so costs can be read back from the answer set.
+
+        One aux rule per *element*: a #minimize/#maximize statement can hold
+        several, each with its own weight, terms, condition and level."""
         builder: list[str] = []
         for line in program.splitlines():
             builder.append(line)
-            if line.strip().startswith((":~", "#minimize", "#maximize")):
-                costs = self.read_costs(line)
-                aux = self.generate_aux(costs)
-                tmp_body = self.generate_body(line)
-                costs.append(tmp_body)
-                builder.append(aux + " :- " + tmp_body + " .")
+            for element in asp_parser.optimization_elements(line):
+                builder.append(self._aux_rule(self.generate_aux(element), element.body))
         return "\n".join(builder) + "\n"
 
     # ------------------------------------------------------------------
@@ -519,17 +536,16 @@ class Debugger:
             line_parsed = line.replace('"', "'")
 
             if not in_answer_set:
-                if line.startswith((":~", "#minimize", "#maximize")):
+                if line.startswith(asp_parser.OPTIMIZATION_PREFIXES):
                     if check_opt:
-                        # Replace the weak constraint with an aux rule; the
-                        # final #sum constraints (below) recreate its effect.
-                        costs = self.read_costs(line)
-                        aux = self.generate_aux(costs)
-                        tmp_body = self.generate_body(line)
-                        costs.append(tmp_body)
-                        self.weak_to_aux[tmp_body] = aux
-                        self.level_to_aux.setdefault(costs[2], []).append(costs)
-                        builder.append(aux + " :- " + tmp_body + " .")
+                        # Replace the statement with one aux rule per element;
+                        # the final #sum constraints (below) recreate its
+                        # effect, level by level.
+                        for element in asp_parser.optimization_elements(line):
+                            aux = self.generate_aux(element)
+                            self.weak_to_aux[element.body] = aux
+                            self.level_to_aux.setdefault(element.level, []).append(element)
+                            builder.append(self._aux_rule(aux, element.body))
                     continue
 
                 if self.debug_rules:
@@ -578,13 +594,13 @@ class Debugger:
         if check_opt:
             # Optimality explanation: require that the cost at the analyzed
             # level gets worse (>=) while every other level keeps its cost.
-            for opt_level, aux_values in self.level_to_aux.items():
+            for opt_level, elements in self.level_to_aux.items():
                 fragments: list[str] = []
-                for aux in aux_values:
-                    fragment = aux[1]
-                    if aux[0] != "":
-                        fragment += "," + aux[0]
-                    fragment += ":" + self.generate_aux(aux)
+                for element in elements:
+                    fragment = element.cost
+                    if element.terms:
+                        fragment += "," + element.terms
+                    fragment += ":" + self.generate_aux(element)
                     fragments.append(fragment)
                 comparator = ">=" if level == opt_level else "!="
                 builder.append(
@@ -1270,21 +1286,17 @@ class Debugger:
     # Weak-constraint helpers
     # ------------------------------------------------------------------
 
-    def read_costs(self, line: str) -> list[str]:
-        """Parse ``[cost@level,terms]`` of a weak constraint into the list
-        ``[discriminant, cost, level]`` used to build aux atoms."""
-        cost_block = asp_parser.cost_of(line)
-        cost, level_discriminant = cost_block.split("@", 1)
-        parts = level_discriminant.split(",", 1)
-        level = parts[0].strip()
-        discriminant = parts[1].strip() if len(parts) > 1 else "empty"
-        return [discriminant, cost.strip(), level]
+    def generate_aux(self, element: asp_parser.OptimizationElement) -> str:
+        """``aux(<terms>,<cost>,<level>)``: the atom recording, in the answer
+        set, that ``element`` pays its cost. ``empty`` stands in for an element
+        that declares no discriminant terms after the level, and the cost
+        carries clingo's sign (negative for a ``#maximize`` element)."""
+        return f"aux({element.terms or 'empty'},{element.cost},{element.level})"
 
-    def generate_aux(self, aux: list[str]) -> str:
-        return f"aux({aux[0]},{aux[1]},{aux[2]})"
-
-    def generate_body(self, line: str) -> str:
-        return asp_parser.body_of(line)
+    @staticmethod
+    def _aux_rule(aux: str, body: str) -> str:
+        """``aux :- body.``, or a plain fact for an unconditional element."""
+        return f"{aux} :- {body} ." if body else f"{aux}."
 
     def update_cost(self) -> None:
         """Sum the aux atoms of the model into a per-level cost. Levels

@@ -1,11 +1,13 @@
 from __future__ import annotations
 
+import re
 from collections.abc import Callable
 from html import escape
 from typing import Iterable
 
 import streamlit as st
 
+from easp import asp_parser
 from easp.models import (
     FREE_CHOICE_EXPLANATION,
     CostLevel,
@@ -185,20 +187,94 @@ def render_answer_sets() -> None:
         st.info("No answer set available.")
         return
 
-    selected = st.selectbox(
-        "Select the answer set to explain",
-        range(len(answer_sets)),
-        format_func=lambda index: f"Answer set {index + 1}",
-        index=min(st.session_state.selected_answer_set, len(answer_sets) - 1),
-        width=250,
-    )
-    st.session_state.selected_answer_set = selected
+    selected = _render_answer_set_list(answer_sets)
+    with st.expander("Selected Answer Sets", expanded=True):
+        st.code(answer_sets[selected], language="prolog", wrap_lines=True)
+    if st.button("Inspect", type="primary", width=250):
+        actions.inspect_answer_set(selected)
 
+
+def _render_answer_set_list(answer_sets: list[str]) -> int:
+    """Searchable table of the computed answer sets; returns the index of the
+    selected one."""
     with st.container(border=True):
-        st.code(", ".join([e if i == 0 or i % 10 != 0 else "\n" + e for i, e in enumerate(str(answer_sets[selected]).split(", "))]), language="prolog")
-        st.space()
-        if st.button("Inspect", type="primary", width=250):
-            actions.inspect_answer_set(selected)
+        st.subheader("All answer sets")
+
+        query = ""
+        if len(answer_sets) > 1:
+            query = st.text_input(
+                "Filter",
+                placeholder="Atoms the answer set must contain, e.g. busy(1) free(2)",
+                help=(
+                    "Space-separated terms: only the answer sets containing "
+                    "**all** of them are listed. Press Enter to apply."
+                ),
+                key="answer_set_search",
+                on_change=_reset_answer_set_table_selection,
+            )
+
+        indexes = [
+            index
+            for index, answer_set in enumerate(answer_sets)
+            if _matches_query(answer_set, query)
+        ]
+        st.caption(
+            f"Showing {len(indexes)} of {len(answer_sets)} answer sets"
+            + _active_terms_caption(query)
+        )
+
+        selected = min(st.session_state.selected_answer_set, len(answer_sets) - 1)
+        if not indexes:
+            st.info("No answer set matches the search.")
+            return selected
+
+        if selected not in indexes:
+            selected = indexes[0]
+        rows = [
+            {
+                "Answer set": index + 1,
+                "Atoms": len(_atoms_of(answer_sets[index])),
+                "Content": answer_sets[index] or "(empty)",
+            }
+            for index in indexes
+        ]
+        selection = st.dataframe(
+            rows,
+            hide_index=True,
+            column_order=("Answer set", "Atoms", "Content"),
+            column_config={
+                "Answer set": st.column_config.NumberColumn(width="small"),
+                "Atoms": st.column_config.NumberColumn(width="small"),
+                "Content": st.column_config.TextColumn(width="large"),
+            },
+            key="answer_set_table",
+            on_select="rerun",
+            selection_mode="single-row",
+            selection_default={"selection": {"rows": [indexes.index(selected)]}},
+            height=_table_height(len(rows)),
+            row_height=35,
+            width="stretch",
+        )
+        selected_rows = selection.selection.rows
+        if selected_rows and 0 <= selected_rows[0] < len(indexes):
+            selected = indexes[selected_rows[0]]
+
+        st.session_state.selected_answer_set = selected
+        return selected
+
+
+def _atoms_of(answer_set: str) -> list[str]:
+    """Atoms of one answer set. Split quote-aware, so the commas inside a
+    string constant such as ``p("a,b")`` do not start a new atom."""
+    return [
+        atom
+        for atom in (piece.strip() for piece in asp_parser.split_top_level(answer_set))
+        if atom
+    ]
+
+
+def _reset_answer_set_table_selection() -> None:
+    st.session_state.pop("answer_set_table", None)
 
 
 def render_inspection() -> None:
@@ -219,6 +295,7 @@ def render_inspection() -> None:
             query = st.text_input(
                 "Search literals",
                 placeholder="Search by predicate, argument or value…",
+                help="Space-separated terms: a literal must match **all** of them.",
                 key="inspection_literal_search",
                 on_change=_reset_inspection_table_selection,
             )
@@ -296,7 +373,7 @@ def render_inspection() -> None:
                     on_select="rerun",
                     selection_mode="single-row",
                     selection_default={"selection": {"rows": [default_row]}},
-                    height=min(430, max(160, 36 * (len(rows) + 1))),
+                    height=_table_height(len(rows)),
                     row_height=35,
                     width="stretch",
                 )
@@ -344,6 +421,11 @@ def render_inspection() -> None:
             st.caption("No cost level available for this answer set.")
 
 
+def _table_height(row_count: int) -> int:
+    """Fit the table to its rows, within a scrollable maximum."""
+    return min(430, max(160, 36 * (row_count + 1)))
+
+
 def _reset_inspection_table_selection() -> None:
     st.session_state.pop("inspection_literal_table", None)
 
@@ -361,8 +443,13 @@ def _stored_inspection_literal(atoms: list[QueryAtom]) -> QueryAtom | None:
 
 
 def _literal_predicate(atom: QueryAtom) -> str:
-    atom_text = atom.atom.strip().removeprefix("-").strip()
-    return atom_text.split("(", 1)[0].strip() or atom_text
+    return _predicate_of(atom.atom)
+
+
+def _predicate_of(atom_text: str) -> str:
+    """Predicate name of an atom, classical negation stripped."""
+    text = atom_text.strip().removeprefix("-").strip()
+    return text.split("(", 1)[0].strip() or text
 
 
 def _literal_truth_label(atom: QueryAtom) -> str:
@@ -394,24 +481,64 @@ def _filter_inspection_atoms(
 
 
 def _literal_matches_query(atom: QueryAtom, query: str) -> bool:
-    """Match prefixes of predicate names or argument values, not substrings.
+    return _matches_query(str(atom), query)
 
-    For example, ``active`` matches ``active(1)`` but not ``inactive(1)``;
-    values inside arguments remain searchable because punctuation starts a
-    new term.
+
+def _matches_query(text: str, query: str) -> bool:
+    """Whether ``text`` contains *every* term of ``query``.
+
+    A query is a space-separated list of terms, so ``shift busy`` keeps only
+    what mentions both. An empty query matches everything.
     """
-    needle = query.strip().casefold()
-    if not needle:
-        return True
+    haystack = _search_key(text)
+    return all(_contains_term(haystack, _search_key(term)) for term in _query_terms(query))
 
-    text = str(atom).casefold()
+
+def _active_terms_caption(query: str) -> str:
+    """Spell out the terms actually being filtered on, so an uncommitted
+    search (Streamlit applies a text input on Enter or on blur) is visibly
+    different from an applied one."""
+    terms = _query_terms(query)
+    if not terms:
+        return ""
+    return " containing " + " and ".join(f"`{term}`" for term in terms)
+
+
+def _query_terms(query: str) -> list[str]:
+    """Terms of a search query: whitespace separated, except that a space
+    inside quotes or inside an argument list keeps a term together, so
+    ``p("a b")`` and ``p(1, 2)`` can be searched as written."""
+    return [term for term in asp_parser.split_top_level(query.strip(), " ") if term]
+
+
+#: Whitespace around brackets and commas, which an atom may be typed with but
+#: clingo never prints.
+_ARGUMENT_PADDING = re.compile(r"\s*([(),\[\]{}])\s*")
+
+
+def _search_key(text: str) -> str:
+    """Normalize text for searching, so an atom can be typed the way it reads
+    rather than the way clingo prints it.
+
+    Quotes are dropped and the spaces around brackets and commas are
+    collapsed, which makes ``shift(carl, 1)`` find ``shift("carl",1)``. Spaces
+    between words are kept, so ``not p`` still differs from ``notp``.
+    """
+    return _ARGUMENT_PADDING.sub(r"\1", text.replace('"', "").replace("'", "")).casefold()
+
+
+def _contains_term(haystack: str, needle: str) -> bool:
+    """Match the start of a predicate name or of an argument value, not any
+    substring: ``active`` matches ``active(1)`` but not ``inactive(1)``, while
+    values inside arguments stay searchable because punctuation starts a new
+    term. Both arguments must already be normalized by ``_search_key``."""
     start = 0
     while True:
-        index = text.find(needle, start)
+        index = haystack.find(needle, start)
         if index < 0:
             return False
         if index == 0 or not (
-            text[index - 1].isalnum() or text[index - 1] == "_"
+            haystack[index - 1].isalnum() or haystack[index - 1] == "_"
         ):
             return True
         start = index + 1
