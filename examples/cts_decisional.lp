@@ -1,3 +1,10 @@
+% Instances of reg(RID,T) represent the registrations, characterized by a patient's id (RID) and the preference for a seat (T), which can be either "chair" or "bed".
+% Instances of duration(RID,PH,D) represent the duration (D) of each phase (PH), which can be either 1, 2, 3, or 4, for a registration (RID).
+% Instances of mss(DAY,TS) represent the available days  (DAY) and set of time slots (TS) in which it is possible to start a phase.
+% Instances of seat(ID,T) represent the available seats, each characterized by an identifier (ID) and its type (T), which can be either "chair" or "bed".
+% Instances of x(RID,DAY,TS) represent that the treatment phase of a registration with id RID is assigned to the day DAY and time slot TS
+% Instances of patient_seat_ts(ID,T,RID,DAY,TS), meaning that the seat with ID and type T is used by the patient with registration RID, during the day DAY and time slot TS
+
 x(RID,DAY,TS) : mss(DAY,TS) :- reg(RID,_).
 preparation_time(RID,DUR) :- reg(RID,_), DUR = #sum{D,PH: duration(RID,PH,D), PH != 4}.
 :- x(RID,_,TS), reg(RID,_), preparation_time(RID,T), TS-T < 1.
